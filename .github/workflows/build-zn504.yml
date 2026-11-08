@@ -1,0 +1,74 @@
+name: Build ZN504 with auto-redirect (NFQUEUE)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ZN504XG-D
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free build space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk \
+            gettext git g++-multilib gcc-multilib gperf help2man intltool \
+            libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+            libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev lld llvm ninja-build p7zip-full patch pkgconf \
+            python3 python3-docutils python3-pip python3-ply python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs unzip wget xmlto xxd zlib1g-dev zstd
+
+      - name: Update and install feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Append NFQUEUE configs for auto-redirect
+        run: |
+          cat << 'EOF' >> configs/release.config
+          CONFIG_PACKAGE_kmod-nfnetlink-queue=y
+          CONFIG_PACKAGE_kmod-nft-queue=y
+          CONFIG_PACKAGE_kmod-ipt-nfqueue=y
+          EOF
+
+      - name: Configure for ZN504XG-D
+        run: |
+          ./scripts/kconfig.pl + \
+            configs/an7581.config \
+            configs/release.config > .config
+          make defconfig
+
+      - name: Download package sources
+        run: make download -j"$(nproc)"
+
+      - name: Compile firmware
+        run: make -j"$(nproc)" || make -j1 V=s
+
+      - name: Organize output files
+        run: |
+          mkdir -p output
+          find bin/targets/airoha/an7581/ -type f \( -name "*zn504*" -o -name "*sysupgrade*" -o -name "*ubi*" \) -exec cp {} output/ \;
+          ls -la output/
+
+      - name: Upload ZN504 Firmware Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZN504XG-D-firmware-with-auto-redirect
+          path: output/*
+          retention-days: 7
