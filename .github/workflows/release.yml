@@ -34,7 +34,7 @@ jobs:
           - an7583
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Free build space
         run: |

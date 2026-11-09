@@ -43,7 +43,31 @@
 - 内置 `kmod-cpufreq-dt` 与 `luci-app-cpufreq`，默认启用 `schedutil` 动态按需调频策略。
 - 待机与轻载时自动将 4 核 Cortex-A53 降频至 600MHz，高吞吐时阶梯跃升至 1.0GHz / 1.2GHz，彻底解决光猫 75°C+ 持续高温积热。
 
-### 6. 流卸载策略 (Flow Offloading) 与局域网维护增强
+### 6. 全量聚合 QWRT 推荐与可选特性、融合 Kahen 与 LeoooChen 社区精华
+- **QWRT 推荐特性全量就绪**：
+  - 片上基地址 `0x1fb70000` 的 **Inside Secure SafeXcel EIP-93 独立硬件密码协处理器 (`kmod-crypto-hw-eip93`, `kmod-cryptodev`)** 与完整密码套件 (`kmod-crypto-aead`, `kmod-crypto-gcm`, `kmod-crypto-sha256/512`, `kmod-crypto-chacha20poly1305`)。
+  - Airoha AN7581 NPU / PPE 硬件流量转发加速 (`luci-app-airoha-npu`, `luci-app-hqos`)。
+  - 达发 2.5G 专用网口 PHY 驱动 (`kmod-phy-airoha-en8811h`, `airoha-en8811h-firmware`)。
+  - 系统调频策略与频率管理 (`luci-app-cpufreq`, `cpufreq`)，支持动态按需与降频省电。
+  - 内存清理与释放 (`luci-app-ramfree`)、存储磁盘分区与挂载管理 (`luci-app-diskman`)、网页终端 (`luci-app-ttyd`) 与 文件快速互传备份 (`luci-app-filetransfer`)。
+  - 核心系统诊断利器 (`ethtool`, `iperf3` 独占 Core 3 测速, `pciutils`, `usbutils`)。
+- **QWRT 精选可选特性 (开箱预编译，随时启用)**：
+  - Samba4 / KSMBD 高速局域网共享 (`luci-app-samba4`, `kmod-fs-ksmbd`)。
+  - 集客无线 AC 控制器 (`luci-app-gecoosac`)，轻松纳管局域网 AP。
+  - 高级网络唤醒 (`luci-app-wolultra`)。
+- **Kahen 项目精华整合 (`Kahen/PonWrt-CI-UBI`)**：
+  - **精准温度遥测**：集成 `temperature-rpc.uc` 与 `autocore` airoha 架构补丁，连通 `/sbin/tempinfo` RPC，解决 LuCI 状态页 0°C 或温度不可用 Bug。
+  - **工厂分区保护与读写**：内置 `kmod-mtd-rw`，支持热备份与恢复原厂校准及认证数据。
+  - **界面与多语言**：预置响应式 Footstrap 主题 (`luci-theme-footstrap`) 与完整 LuCI 简体中文语言包。
+- **LeoooChen 项目精华整合 (`LeoooChen/PonWRT-TYFZA1`)**：
+  - **XG-PON PPPoE 线速流量卸载**：千兆拨号满速转发，CPU 占用低至约 4.5%。
+  - **8MB 超大网络缓冲与 IPTV UDP 调优**：扩充 Socket 接收/发送队列与 `txqueuelen 5000`，彻底消除 4K/8K 组播与大文件突发丢包。
+- **Momo & Sing-Box 代理体验**：
+  - 原生预装 `luci-app-momo` 与最新 `sing-box` 核心。
+  - 内置 Momo 完整简体中文汉化语言包 (`momo.zh-cn.lmo`)。
+  - 预置 128MiB 健康堆内存上限与定时内存碎片整理，彻底杜绝 OOM 爆内存崩溃。
+
+### 7. 流卸载策略 (Flow Offloading) 与局域网维护增强
 - 默认开启 Firewall4 软件流卸载（`flow_offloading='1'`），默认关闭硬件 PPE 流卸载（`flow_offloading_hw='0'`），彻底规避 Airoha/MTK PPE 硬件引擎在 PPPoE over VLAN 与 IPv6 入站直通（飞牛 NAS、OpenList、Emby、STRM 串流）时的死锁与丢包 Bug，4 核 Cortex-A53 软转发跑满千兆 CPU 占用率 < 15%。
 - 防火墙 `wan` 区域原生绑定 `wan_6` 动态 IPv6 接口，确保外网连接跟踪与状态机 100% 同步。
 - 开箱内置 `xupnpd`（DLNA IPTV 直播推流）、`luci-app-arpbind`（IP/MAC 静态防漂移绑定）、`luci-app-autoreboot`（计划定时健康自愈重启）。
