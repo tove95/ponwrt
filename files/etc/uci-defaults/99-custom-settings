@@ -60,9 +60,10 @@ add_list uhttpd.main.listen_http='[::]:9080'
 commit uhttpd
 EOF
 
-# 1.2 预置 LuCI 默认主题为经典 Argon 主题
+# 1.2 预置 LuCI 默认主题为 Vantage 主题（并注册主题列表）
 uci -q batch <<EOF
-set luci.main.mediaurlbase='/luci-static/argon'
+set luci.themes.Vantage='/luci-static/vantage'
+set luci.main.mediaurlbase='/luci-static/vantage'
 commit luci
 EOF
 
