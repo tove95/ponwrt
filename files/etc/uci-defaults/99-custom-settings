@@ -34,7 +34,30 @@ set firewall.allow_macmini_ipv6.family='ipv6'
 set firewall.allow_macmini_ipv6.proto='tcp udp'
 set firewall.allow_macmini_ipv6.dest_port='22 2283 6771 8080 8096 8123 9876 21063-21065'
 set firewall.allow_macmini_ipv6.target='ACCEPT'
+
+set firewall.allow_luci_wan=rule
+set firewall.allow_luci_wan.name='Allow-LuCI-WAN'
+set firewall.allow_luci_wan.src='wan'
+set firewall.allow_luci_wan.proto='tcp'
+set firewall.allow_luci_wan.dest_port='9080'
+set firewall.allow_luci_wan.target='ACCEPT'
+
+set firewall.allow_ax3000t_ipv6=rule
+set firewall.allow_ax3000t_ipv6.name='Allow-AX3000T-IPv6'
+set firewall.allow_ax3000t_ipv6.src='wan'
+set firewall.allow_ax3000t_ipv6.dest='lan'
+set firewall.allow_ax3000t_ipv6.family='ipv6'
+set firewall.allow_ax3000t_ipv6.proto='tcp'
+set firewall.allow_ax3000t_ipv6.dest_port='8080'
+set firewall.allow_ax3000t_ipv6.target='ACCEPT'
 commit firewall
+EOF
+
+# 1.1.2 预置 uhttpd 监听 9080 端口用于外网 IPv6 远程管理（规避运营商封锁 80/443）
+uci -q batch <<EOF
+add_list uhttpd.main.listen_http='0.0.0.0:9080'
+add_list uhttpd.main.listen_http='[::]:9080'
+commit uhttpd
 EOF
 
 # 1.2 预置 LuCI 默认主题为 Vantage（与小米 AX3000T 保持一致）
