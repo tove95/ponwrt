@@ -60,9 +60,9 @@ add_list uhttpd.main.listen_http='[::]:9080'
 commit uhttpd
 EOF
 
-# 1.2 预置 LuCI 默认主题为 Vantage（与小米 AX3000T 保持一致）
+# 1.2 预置 LuCI 默认主题为经典 Argon 主题
 uci -q batch <<EOF
-set luci.main.mediaurlbase='/luci-static/vantage'
+set luci.main.mediaurlbase='/luci-static/argon'
 commit luci
 EOF
 
