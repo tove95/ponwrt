@@ -1,4 +1,4 @@
-# PonWrt for 兆能 ZN504XG-D (Airoha AN7581)
+# PonWrt 6.18 for 兆能 ZN504XG-D (Airoha AN7581)
 
 English | [简体中文](README_zh.md)
 
@@ -6,27 +6,55 @@ English | [简体中文](README_zh.md)
 [![Latest Release](https://img.shields.io/github/v/release/wuziwei/ponwrt-ZN504?style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504/releases)
 [![Target](https://img.shields.io/badge/SoC-Airoha%20AN7581-blue?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
 [![Device](https://img.shields.io/badge/Device-ZNXT%20ZN504XG--D-green?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
+[![Kernel](https://img.shields.io/badge/Kernel-Linux%206.18-informational?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
 [![License](https://img.shields.io/badge/License-GPL--2.0-orange?style=flat-square)](LICENSE)
 
-This repository provides customized and enhanced [PonWrt](https://github.com/pbs05/ponwrt) (based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)) firmware specifically tuned for the **ZNXT (兆能) ZN504XG-D** optical network terminal (ONT), powered by the Airoha AN7581 quad-core ARM64 SoC.
+Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) / Linux `6.18`) firmware specifically engineered for the **ZNXT (兆能) ZN504XG-D (`znxt_zn504xg-d`)** 10G PON optical modem / gateway, powered by the Airoha AN7581 quad-core ARM64 SoC.
 
 ---
 
-## 🌟 Key Features & Improvements
+## 🌟 Key Features & Architectural Enhancements
 
-- 🚀 **Integrated Kernel NFQUEUE Drivers (Fixes Sing-Box `auto-redirect`)**:
-  - Pre-compiled and integrated `kmod-nfnetlink-queue`, `kmod-nft-queue`, and `kmod-ipt-nfqueue`.
-  - Fixes the crash when enabling `auto_redirect: true` in Sing-Box / Momo on stock PonWrt:
-    > `FATAL[0000] start nfqueue: could not unbind existing handlers: netlink receive: invalid argument (-EINVAL)`
-  - Enables zero-configuration transparent proxying via Sing-Box TUN mode without requiring fragile custom nftables scripting.
-- 🌐 **Comprehensive PON Link & O5 Registration**:
-  - Full LuCI diagnostics integration (`luci-app-pon` and `airoha-pon-debug`).
-  - Web & CLI support for modifying Vendor ID (e.g., `FHTT`), Equipment ID (e.g., `HS8145X6 (PON ONT)`), PON SN, LOID, cloned MAC, and VLAN binding.
-  - Verified stable **O5 operational state** on live XG-PON lines with real-time optical power, temperature, and voltage telemetry.
-- ⚡ **Wire-Speed Line Rate Routing**:
-  - Linux 6.18 kernel on ARM64 Cortex-A53 quad-core architecture with hardware offload for PPPoE, IPv4, and IPv6 traffic.
-- 🔄 **Automated GitHub Actions CI/CD**:
-  - Includes ready-to-run GitHub Actions workflows to compile and package custom firmware in the cloud.
+### 1. Full-Stack Airoha AN7581 Native PON Drivers
+- Integrated `kmod-airoha-xpon`, `kmod-airoha-en7572` (BOSA), `kmod-phy-airoha-en8811h` (2.5G PHY), and `airoha-en7581-npu-firmware` (NPU hardware offload).
+- Integrated `airoha-pond`, `airoha-ponctl`, and `luci-app-pon`.
+- Supports GPON / XG-PON / XGS-PON **O5 operational state** registration and verification, with full configuration of Vendor ID (e.g., `FHTT`), Equipment ID (e.g., `HS8145X6 (PON ONT)`), PON SN, LOID, password, cloned MAC, and BOSA calibration volume preservation.
+- Live telemetry for Rx/Tx optical power, operating voltage, and SoC temperature.
+
+### 2. Kernel Netfilter NFQUEUE Integration (Native Sing-Box `auto-redirect`)
+- Compiled and integrated `kmod-nfnetlink-queue`, `kmod-nft-queue`, and `kmod-ipt-nfqueue`.
+- Completely solves the crash when enabling `auto_redirect: true` in Sing-Box / Momo on stock PonWrt:
+  > `FATAL[0000] start nfqueue: could not unbind existing handlers: netlink receive: invalid argument (-EINVAL)`
+- Enables native transparent proxy redirection via Sing-Box TUN mode without requiring complex custom nftables scripting.
+- Optimized for Momo (`core_only='1'`), lifting the default 60MiB hard-coded memory restriction to `128MiB` with direct bypass routing for multicast `224.0.0.0/4` and `239.0.0.0/8`.
+
+### 3. Hardware Crypto Coprocessor Acceleration (Inside Secure SafeXcel EIP-93)
+- Resolves the performance bottleneck and thermal throttling caused by the lack of ARMv8 AES CPU extensions on the physical AN7581 cores.
+- Driver-level activation of the on-chip **Inside Secure SafeXcel EIP-93 dedicated hardware cryptographic engine (`kmod-crypto-hw-eip93`)** at base address `0x1fb70000`.
+- Integrated `kmod-cryptodev` to expose `/dev/crypto` to user-space.
+- Fully wired into the OpenSSL engine subsystem (`libopenssl-devcrypto`) via `/etc/ssl/modules.cnf.d/devcrypto.cnf`, offloading AES (ECB/CBC/CTR), DES/3DES, and SHA/HMAC calculations directly to the hardware engine for wire-speed crypto and low CPU load.
+
+### 4. Dual-Stack 4K Telecom IPTV Engine
+- **PON Layer**: Built-in `luci-app-iptv` for binding IPTV service VLAN and multicast VLANs on dial-up or bridge mode.
+- **Application Layer**: Integrated `msd_lite` (listening on port `4022`, configured with 8MB circular cache + 4 threads) and `udpxy` (backup), coupled with 8MB UDP socket kernel buffer optimization (`99-custom-net-optimization.conf`).
+- **Dynamic Playlist**: Bundled with Guangdong Shenzhen Telecom categorized `/www/iptv.m3u`, automatically updated with the current LAN gateway IP via the `95-iptv-m3u-ip` hotplug hook.
+
+### 5. Dynamic Frequency Scaling & Thermal Control (`cpufreq`)
+- Integrated `kmod-cpufreq-dt` and `luci-app-cpufreq` using the `schedutil` governor.
+- Automatically scales the 4x Cortex-A53 cores down to 600MHz at idle and ramps up to 1.0GHz / 1.2GHz under load, preventing overheating.
+
+### 6. PPE Hardware Flow Offloading & Maintenance Utilities
+- Firewall4 hardware flow offloading enabled (`flow_offloading='1'`, `flow_offloading_hw='1'`) through the Airoha AN7581 PPE engine.
+- Out-of-the-box support for `xupnpd` (DLNA IPTV streaming), `luci-app-arpbind` (static IP/MAC anti-drift binding), and `luci-app-autoreboot` (scheduled auto-restart).
+- Pre-configured shell alias `alias iperf3='iperf3 -A 3'` pinning speedtests to Core 3, avoiding network interrupt starvation on other cores.
+
+### 7. Dynamic DNS (DDNS-Go)
+- Pre-installed `ddns-go` + `luci-app-ddns-go` + `luci-i18n-ddns-go-zh-cn` for IPv4 & IPv6 automated DNS record management.
+
+### 8. System Ergonomics & Aesthetics
+- **Vantage Console Theme & Dashboard** (pre-enabled by default; classical Argon theme also bundled).
+- ZRAM `zstd` compressed swap (256MB swap + daily 04:30 defragmentation).
+- `ttyd` terminal auto-login, `nlbwmon` bandwidth monitor, and `ramfree` memory reclamation.
 
 ---
 
@@ -45,6 +73,7 @@ Download release binaries from [GitHub Releases](https://github.com/wuziwei/ponw
 ```text
 57d082b69d94b22adbe1d8c9650262617d38a4978bc64c6a80dabb847fbb3f64  ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb
 908e92b6ed13cdf7c36465f8a5ec5a98aa6af9a68218fff5313f229669eda5af  ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb
+f90cd5bb3b03dc7274f72190b9fe07ad8afd0697d5cf124c70045cf64fb4f41a  momo-bundle.tar.gz
 ```
 
 ---
