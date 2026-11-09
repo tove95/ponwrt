@@ -1,0 +1,9 @@
+#!/bin/sh
+# 动态守护 IPv6 默认路由（当作为旁路由/二级设备且缺失 WAN IPv6 默认路由时，自动回退至上游 fe80::1）
+[ "$ACTION" = ifup -o "$ACTION" = ifupdate ] || exit 0
+
+if [ "$INTERFACE" = "lan" ] || [ "$INTERFACE" = "lan6" ]; then
+    if ! ip -6 route show default 2>/dev/null | grep -q 'default'; then
+        ip -6 route replace default via fe80::1 dev br-lan 2>/dev/null
+    fi
+fi

@@ -1,0 +1,15 @@
+#!/bin/sh
+# 保持有线网口 (lan1~lan4 / eth1 / pon0) 间的 IPv6 NDP 邻居发现与 IPTV 组播直通
+if [ "$ACTION" = "add" ]; then
+    case "$DEVICENAME" in
+        lan*|eth*|pon*)
+            [ -e /sys/devices/virtual/net/br-lan/brif/$DEVICENAME/multicast_router ] && echo 2 > /sys/devices/virtual/net/br-lan/brif/$DEVICENAME/multicast_router
+            ip link set "$DEVICENAME" txqueuelen 5000 2>/dev/null
+            ;;
+        br-lan)
+            echo 0 > /sys/devices/virtual/net/br-lan/bridge/multicast_snooping 2>/dev/null
+            ip link set br-lan txqueuelen 5000 2>/dev/null
+            sysctl -p /etc/sysctl.d/99-custom-net-optimization.conf 2>/dev/null
+            ;;
+    esac
+fi

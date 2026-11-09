@@ -13,7 +13,7 @@
 /logs
 /feeds
 /feeds.conf
-/files
+# /files - tracked for custom files
 /target/linux/feeds
 /overlay
 /package/feeds

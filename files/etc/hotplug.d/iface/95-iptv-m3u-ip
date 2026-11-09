@@ -1,0 +1,10 @@
+#!/bin/sh
+# 当 LAN 接口启动或变更 IP 时，自动将 /www/iptv.m3u 中的播放地址同步为本机当前 LAN IP
+[ "$ACTION" = ifup -o "$ACTION" = ifupdate ] || exit 0
+
+if [ "$INTERFACE" = "lan" ] && [ -f /www/iptv.m3u ]; then
+    LAN_IP=$(uci -q get network.lan.ipaddr)
+    if [ -n "$LAN_IP" ]; then
+        sed -i "s|http://[0-9.]*:4022/rtp/|http://${LAN_IP}:4022/rtp/|g" /www/iptv.m3u 2>/dev/null
+    fi
+fi
