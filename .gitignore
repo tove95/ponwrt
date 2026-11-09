@@ -36,3 +36,14 @@ git-src
 .ccache
 .sccache
 .vscode*
+
+# Sensitive PON authentication & ISP backup files (STRICT PRIVACY PROTECTION)
+*fiberhome_pon*
+*pon_backup*
+*pon_info*
+*factory_backup*
+*backup*.uci
+*backup*.tar*
+*backup*.bin
+files/etc/config/pon
+files/etc/fiberhome*
