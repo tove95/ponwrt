@@ -43,8 +43,9 @@
 - 内置 `kmod-cpufreq-dt` 与 `luci-app-cpufreq`，默认启用 `schedutil` 动态按需调频策略。
 - 待机与轻载时自动将 4 核 Cortex-A53 降频至 600MHz，高吞吐时阶梯跃升至 1.0GHz / 1.2GHz，彻底解决光猫 75°C+ 持续高温积热。
 
-### 6. 硬件流卸载 (PPE Flow Offloading) 与局域网维护增强
-- 开启 Firewall4 硬件流卸载（`flow_offloading='1'` 与 `flow_offloading_hw='1'`），打通 Airoha AN7581 专属 PPE 硬件直通加速。
+### 6. 流卸载策略 (Flow Offloading) 与局域网维护增强
+- 默认开启 Firewall4 软件流卸载（`flow_offloading='1'`），默认关闭硬件 PPE 流卸载（`flow_offloading_hw='0'`），彻底规避 Airoha/MTK PPE 硬件引擎在 PPPoE over VLAN 与 IPv6 入站直通（飞牛 NAS、OpenList、Emby、STRM 串流）时的死锁与丢包 Bug，4 核 Cortex-A53 软转发跑满千兆 CPU 占用率 < 15%。
+- 防火墙 `wan` 区域原生绑定 `wan_6` 动态 IPv6 接口，确保外网连接跟踪与状态机 100% 同步。
 - 开箱内置 `xupnpd`（DLNA IPTV 直播推流）、`luci-app-arpbind`（IP/MAC 静态防漂移绑定）、`luci-app-autoreboot`（计划定时健康自愈重启）。
 - 环境变量注入 `alias iperf3='iperf3 -A 3'`，强制独占 4 核中的 Core 3 测速，彻底避开网卡与系统软中断。
 
