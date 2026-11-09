@@ -195,3 +195,33 @@ Outputs are located in `bin/targets/airoha/an7581/`.
 1. This project is for personal learning, testing, and research only.
 2. Flashing third-party firmware bears inherent risks. Always back up your calibration and configuration data.
 3. Users are responsible for complying with local regulations and carrier policies.
+
+---
+
+## 🙏 Acknowledgments & Credits
+
+This project builds upon the tremendous contributions of the open-source router and networking community. Special thanks and sincere appreciation to the following developers and projects:
+
+### 1. Base System & Core Firmware Architecture
+- **[OpenWrt Project](https://github.com/openwrt/openwrt)**: The foundational extensible Linux operating system for embedded devices.
+- **[ImmortalWrt](https://github.com/immortalwrt/immortalwrt)**: The highly optimized, feature-rich OpenWrt distribution and ecosystem.
+- **[pbs05/ponwrt](https://github.com/pbs05/ponwrt)**: The pioneering open-source PonWrt firmware base and drivers for Airoha AN7581/AN7583 10G PON ONTs.
+- **[coolsnowwolf (Lean)](https://github.com/coolsnowwolf/lede)**: For immense contributions to the OpenWrt ecosystem and foundational components like `autocore`.
+
+### 2. Hardware Acceleration & Engineering Benchmarks
+- **QWRT Firmware Developers**: For pioneering the Inside Secure SafeXcel EIP-93 dedicated hardware cryptographic engine (`kmod-crypto-hw-eip93`), Airoha PPE flow acceleration, and hardware performance tuning.
+- **[Kahen/PonWrt-CI-UBI](https://github.com/Kahen/PonWrt-CI-UBI)**: For the SoC thermal telemetry solution (`temperature-rpc.uc` LuCI RPC integration), MTD read-write partition protection (`kmod-mtd-rw`), and robust CI build engineering.
+- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**: For XG-PON PPPoE line-rate flow offloading (ultra-low 4.5% CPU usage at 1Gbps), 8MB high-throughput socket buffers, and network optimization.
+- **[bingoguo93](https://github.com/bingoguo93)**: For OpenWRT-CI-XG-040G-MD experience and package manifest benchmarks.
+
+### 3. Core Networking, Transparent Proxy & Applications
+- **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**: The universal, high-performance proxy platform.
+- **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**: The clean, streamlined LuCI transparent proxy management suite for sing-box.
+- **[sirpdboy/luci-app-lucky](https://github.com/sirpdboy/luci-app-lucky)** & **[lucky (gdy666)](https://github.com/gdy666/lucky)**: All-in-one port forwarding, DDNS, STUN NAT1, and reverse proxy engine.
+- **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**: Web dashboard monitoring AN7581 8-core RISC-V NPU and hardware PPE flow tables.
+- **[VIKINGYFY/packages](https://github.com/VIKINGYFY/packages)**: For Gecoos AC controller (`luci-app-gecoosac`) and Wake-on-LAN Ultra (`luci-app-wolultra`).
+- **[rozhuk-im/msd_lite](https://github.com/rozhuk-im/msd_lite)**: High-performance, lightweight multicast-to-HTTP proxy for 4K/8K IPTV streaming.
+
+### 4. UI Themes & User Experience
+- **[VizzleTF/luci-theme-footstrap](https://github.com/VizzleTF/luci-theme-footstrap)**: Clean and modern responsive theme adapted for PonWrt.
+- **[jerrykuku/luci-theme-argon](https://github.com/jerrykuku/luci-theme-argon)**: The classic, elegant Argon theme.

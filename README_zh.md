@@ -247,3 +247,33 @@ make -j$(nproc) || make -j1 || make -j1 V=s
 1. 本项目为开源固件项目，旨在用于技术交流与网络设备功能研究。
 2. 刷写第三方固件具有一定风险，操作前请务必使用 `backup-fiberhome-pon.sh` 备份好克隆的烽火 PON 认证数据（LOID、SN、Vendor ID）与宽带认证信息。
 3. 请严格遵守当地电信运营商的相关管理规定，严禁用于任何非法网络活动。
+
+---
+
+## 🙏 致谢与引用项目 (Acknowledgments & References)
+
+本项目凝聚了开源社区众多前驱开发者与项目的智慧结晶，特此对以下项目及贡献者表达诚挚感谢与崇高敬意：
+
+### 1. 基础固件与底层架构
+- **[OpenWrt Project](https://github.com/openwrt/openwrt)**：为全球网络设备提供坚实、可扩展的嵌入式 Linux 操作系统底座。
+- **[ImmortalWrt](https://github.com/immortalwrt/immortalwrt)**：提供高度优化、特性丰富的中国本地化 OpenWrt 分支与构建环境。
+- **[pbs05/ponwrt](https://github.com/pbs05/ponwrt)**：达发 Airoha AN7581 / AN7583 PON 光猫开源架构与驱动的奠基之作，本项目核心源码基底。
+- **[coolsnowwolf (Lean)](https://github.com/coolsnowwolf/lede)**：为 OpenWrt 社区带来活跃生态与开创性组件，提供 `autocore` 等基础监控源码。
+
+### 2. 硬件加速与工程调优标杆
+- **QWRT 固件团队 / 开发者**：为达发芯片探索出 Inside Secure SafeXcel EIP-93 独立硬件密码协处理器驱动 (`kmod-crypto-hw-eip93`)、达发 PPE 硬件流表加速与系统调优的优秀实践范例。
+- **[Kahen/PonWrt-CI-UBI](https://github.com/Kahen/PonWrt-CI-UBI)**：提供 AN7581 SoC 精确温度遥测方案 (`temperature-rpc.uc` 与 LuCI RPC 联动)、MTD 读写保护 (`kmod-mtd-rw`)、自动化 CI 构建与包依赖冲突治理经验。
+- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**：提供 XG-PON 线路与 PPPoE 线速流量硬件卸载（4.5% 超低 CPU 占用）、8MB 高通量网络与 IPTV UDP 缓冲深度调优实践。
+- **[bingoguo93](https://github.com/bingoguo93)**：OpenWRT-CI-XG-040G-MD 经验与包选型参考。
+
+### 3. 核心网络、代理与应用生态
+- **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**：新一代通用通用网络代理核心。
+- **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**：极简高效的 OpenWrt sing-box 透明网关前端与控制面板。
+- **[sirpdboy/luci-app-lucky](https://github.com/sirpdboy/luci-app-lucky)** & **[lucky (gdy666)](https://github.com/gdy666/lucky)**：强大的内网穿透、STUN NAT1 打洞、动态域名 DDNS、端口转发全能工具。
+- **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**：达发 AN7581 独立 8 核 RISC-V NPU / PPE 运行状态与硬件流表监控看板。
+- **[VIKINGYFY/packages](https://github.com/VIKINGYFY/packages)**：集客无线 AC 控制器 (`luci-app-gecoosac`) 与高级网络唤醒 (`luci-app-wolultra`)。
+- **[rozhuk-im/msd_lite](https://github.com/rozhuk-im/msd_lite)**：超轻量、高通量 4K/8K IPTV 组播转单播 HTTP 代理服务器。
+
+### 4. 界面美化与用户体验
+- **[VizzleTF/luci-theme-footstrap](https://github.com/VizzleTF/luci-theme-footstrap)**：专为 PonWrt 适配的清爽现代响应式主题。
+- **[jerrykuku/luci-theme-argon](https://github.com/jerrykuku/luci-theme-argon)**：经典优雅的 Argon 主题。
