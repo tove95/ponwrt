@@ -39,6 +39,10 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Prepare custom packages
+        run: |
+          bash ./scripts/customize.sh
+
       - name: Append NFQUEUE configs for auto-redirect
         run: |
           cat << 'EOF' >> configs/release.config

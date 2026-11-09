@@ -49,10 +49,22 @@
 - 开箱内置 `xupnpd`（DLNA IPTV 直播推流）、`luci-app-arpbind`（IP/MAC 静态防漂移绑定）、`luci-app-autoreboot`（计划定时健康自愈重启）。
 - 环境变量注入 `alias iperf3='iperf3 -A 3'`，强制独占 4 核中的 Core 3 测速，彻底避开网卡与系统软中断。
 
-### 7. 动态域名解析 DDNS-Go
-- 内置 `ddns-go` + `luci-app-ddns-go` + `luci-i18n-ddns-go-zh-cn`，轻松实现公网 IPv4 / IPv6 动态域名绑定。
+### 7. 达发 AN7581 NPU / PPE 硬件加速图形控制台 (`luci-app-airoha-npu`)
+- 整合自 `rchen14b/luci-app-airoha-npu` 与 `Kahen/PonWrt-CI-UBI` 优秀实践。
+- 在 Web 控制台首页直观监控 8 核 RISC-V 独立 NPU 运行状态、硬件 PPE 包转发流表（Fastpath 实时流）、PSE 交换端口队列与共享缓存状态。
+- 原生支持 CPU 动态调频策略查看与安全 PLL 频率配置。
 
-### 8. 系统与审美调优
+### 8. 烽火 (FiberHome) PON 认证参数一键备份与自动防刷除保护
+- 专门针对 ZN504 克隆电信原装烽火光猫（如 HG5585F，Vendor ID: `FHTT`）上线场景深度定制。
+- 提供 `/usr/sbin/backup-fiberhome-pon.sh` 与 `/usr/sbin/restore-fiberhome-pon.sh` 脚本，一键提取并校验 `FHTT`、`HG5585FV1.0`、LOID、PON SN 及设备标识。
+- 自动维护 `/etc/sysupgrade.conf`，将烽火认证数据及备忘档案永久纳入保护清单，彻底告别固件升级后需要重填认证信息的痛点。
+
+### 9. 实用网络插件生态 (Lucky & 定时自愈)
+- **Lucky 全能小工具 (`luci-app-lucky`)**：集成 IPv6 动态域名 DDNS、STUN 内网穿透/NAT1 打洞、反向代理、端口转发与 WebDAV，极度轻量低开销。
+- **定时健康重启 (`luci-app-autoreboot`)**：支持计划任务在凌晨自动平滑重启并清理连接跟踪碎片，确保光猫数月持续高负载运行不衰速。
+- **全功能 DNS 解析引擎 (`dnsmasq-full`)**：开箱默认替代精简版 `dnsmasq`，原生支持 `ipset`、`nftset` 与 DNSSEC，为 Sing-Box、MosDNS 及各类透明分流提供坚实底层。
+
+### 10. 系统与审美调优
 - **Vantage 控制台主题与网络监控看板**（开箱默认启用；同时内置经典 Argon 离线主题作为备选）。
 - ZRAM `zstd` 压缩（256MB 交换区 + 每日凌晨 04:30 自动碎片整理）。
 - `ttyd` 自动免密登录、`nlbwmon` 带宽监控、`ramfree` 内存释放。
@@ -82,7 +94,19 @@ f90cd5bb3b03dc7274f72190b9fe07ad8afd0697d5cf124c70045cf64fb4f41a  momo-bundle.ta
 ## 🛠️ 刷机与升级指南
 
 > [!IMPORTANT]
-> 升级前强烈建议导出当前设备的配置与分区备份（尤其是 `factory` / `reservearea` 原厂校准分区与身份数据）。
+> **关于光猫认证参数保护（特别提醒）**：
+> 本设备（ZN504）接入运营商网络通常使用的是**克隆的原电信烽火（FiberHome / FHTT）光猫认证参数**（包含 `vendor_id='FHTT'`、`hardware_version='HG5585FV1.0'`、LOID 与 SN），而非 ZN504 的原厂未配置出厂状态。
+> 因此，升级前**切勿清空配置恢复出厂**，应直接使用保留配置升级，或在终端执行 `/usr/sbin/backup-fiberhome-pon.sh` 生成烽火认证参数备份！
+
+### 烽火 PON 认证参数一键备份与恢复
+
+```bash
+# 1. 终端执行一键备份（自动生成 /etc/fiberhome_pon_backup.uci 并写入 sysupgrade 保护清单）
+/usr/sbin/backup-fiberhome-pon.sh
+
+# 2. 若误恢复出厂或重置，执行一键还原即可重新握手 OLT
+/usr/sbin/restore-fiberhome-pon.sh
+```
 
 ### 方式一：SSH 命令行保留配置安全升级（强烈推荐）
 
@@ -197,5 +221,5 @@ make -j$(nproc) || make -j1 || make -j1 V=s
 ## ⚠️ 免责声明
 
 1. 本项目为开源固件项目，旨在用于技术交流与网络设备功能研究。
-2. 刷写第三方固件具有一定风险，操作前请务必备份好原厂分区数据与 LOID、宽带认证信息。
+2. 刷写第三方固件具有一定风险，操作前请务必使用 `backup-fiberhome-pon.sh` 备份好克隆的烽火 PON 认证数据（LOID、SN、Vendor ID）与宽带认证信息。
 3. 请严格遵守当地电信运营商的相关管理规定，严禁用于任何非法网络活动。

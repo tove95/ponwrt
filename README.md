@@ -82,7 +82,19 @@ f90cd5bb3b03dc7274f72190b9fe07ad8afd0697d5cf124c70045cf64fb4f41a  momo-bundle.ta
 ## 🛠️ Flashing & Upgrade Guide
 
 > [!IMPORTANT]
-> Always backup your original flash partitions (especially `factory` / `reservearea` identity data) before flashing.
+> **FiberHome (FHTT) PON Credentials Safeguard**:
+> This device operates using cloned **FiberHome (FHTT / HG5585FV1.0)** credentials to authenticate with the ISP OLT, rather than bare factory defaults.
+> Never wipe the device with a clean flash without retaining configuration. Run `/usr/sbin/backup-fiberhome-pon.sh` before upgrading to ensure your cloned FiberHome PON parameters are securely backed up.
+
+### Backup & Restore FiberHome PON Credentials
+
+```bash
+# Backup credentials to /etc/fiberhome_pon_backup.uci and protect in sysupgrade.conf
+/usr/sbin/backup-fiberhome-pon.sh
+
+# Restore credentials if settings are ever reset
+/usr/sbin/restore-fiberhome-pon.sh
+```
 
 ### Method 1: Non-Destructive SSH Upgrade (Recommended)
 

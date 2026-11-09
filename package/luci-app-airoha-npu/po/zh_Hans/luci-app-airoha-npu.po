@@ -1,0 +1,95 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+msgid "Airoha SoC Status"
+msgstr "达发 SoC 与 NPU 状态"
+
+msgid "SoC Status"
+msgstr "SoC 与 NPU 状态"
+
+msgid "NPU & Offload Engine"
+msgstr "NPU 协处理器与硬件卸载引擎"
+
+msgid "NPU Status"
+msgstr "NPU 状态"
+
+msgid "PPE Engines"
+msgstr "PPE 包处理引擎"
+
+msgid "PPE Flow Offload Entries"
+msgstr "PPE 硬件流表条目 (Fastpath)"
+
+msgid "PSE Port Queue Status"
+msgstr "PSE 交换端口队列状态"
+
+msgid "PSE Shared Buffer"
+msgstr "PSE 共享缓冲区"
+
+msgid "CPU Frequency"
+msgstr "CPU 工作频率"
+
+msgid "Current Frequency"
+msgstr "当前频率"
+
+msgid "CPU Cores"
+msgstr "CPU 核心数"
+
+msgid "Reserved Memory"
+msgstr "硬件预留内存"
+
+msgid "Overclock"
+msgstr "超频控制"
+
+msgid "Active"
+msgstr "已激活"
+
+msgid "Not Active"
+msgstr "未激活"
+
+msgid "Bound"
+msgstr "已绑定"
+
+msgid "Drop %s"
+msgstr "丢包 %s"
+
+msgid "TX"
+msgstr "发送 (TX)"
+
+msgid "RX"
+msgstr "接收 (RX)"
+
+msgid "TX Drop"
+msgstr "发送丢包"
+
+msgid "RX Drop"
+msgstr "接收丢包"
+
+msgid "Ethernet"
+msgstr "以太网"
+
+msgid "State"
+msgstr "状态"
+
+msgid "Type"
+msgstr "协议类型"
+
+msgid "Original Flow"
+msgstr "原始流向"
+
+msgid "New Flow"
+msgstr "卸载流向"
+
+msgid "Apply"
+msgstr "应用设置"
+
+msgid "Applying..."
+msgstr "正在应用..."
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Continue"
+msgstr "继续"
+
+msgid "Confirm overclock"
+msgstr "确认超频"

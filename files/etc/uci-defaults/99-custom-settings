@@ -217,4 +217,20 @@ echo 'hsts=0' > /root/.wgetrc
 sed -i '/log-facility/d' /etc/dnsmasq.conf 2>/dev/null
 echo "log-facility=/dev/null" >> /etc/dnsmasq.conf
 
+# 9. 烽火 (FiberHome) PON 认证参数自动保护机制
+# 将烽火认证关键路径加入 /etc/sysupgrade.conf，防止固件升级抹除认证数据
+SYSUPGRADE_CONF="/etc/sysupgrade.conf"
+for path in "/etc/config/pon" "/etc/fiberhome_pon_backup.uci" "/etc/fiberhome_pon_info.txt" "/usr/sbin/backup-fiberhome-pon.sh" "/usr/sbin/restore-fiberhome-pon.sh"; do
+    if ! grep -q "^$path" "$SYSUPGRADE_CONF" 2>/dev/null; then
+        echo "$path" >> "$SYSUPGRADE_CONF"
+    fi
+done
+
+# 若存在有效烽火配置，自动生成安全备份；若配置丢失则尝试从备份自动还原
+if [ -x /usr/sbin/backup-fiberhome-pon.sh ] && [ -f /etc/config/pon ]; then
+    /usr/sbin/backup-fiberhome-pon.sh 2>/dev/null || true
+elif [ -x /usr/sbin/restore-fiberhome-pon.sh ] && [ ! -s /etc/config/pon ] && [ -f /etc/fiberhome_pon_backup.uci ]; then
+    /usr/sbin/restore-fiberhome-pon.sh 2>/dev/null || true
+fi
+
 exit 0
