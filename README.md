@@ -46,6 +46,10 @@ Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (b
 ### 6. Flow Offloading & Maintenance Utilities
 - Firewall4 software and hardware PPE flow offloading enabled by default (`flow_offloading='1'`, `flow_offloading_hw='1'`), verified stable over long-term high-throughput PPPoE-over-VLAN workloads on Linux 6.18.60, providing line-rate Fastpath packet processing via the Airoha 8-core NPU/PPE to significantly offload the 4-core Cortex-A53 CPU and reduce heat dissipation.
 - Native dynamic IPv6 interface `wan_6` binding added to Firewall zone `wan` for comprehensive state tracking.
+- QWRT per-CPU pagelist memory optimization (`vm.percpu_pagelist_high_fraction = 128`) preventing page allocation stalls and memory fragmentation under high-bandwidth multi-core concurrency.
+- QWRT SSDP (`239.255.255.250:1900`) and WSD (`3702`) `NOTRACK` bypass to avoid connection tracking table bloat and switch CDM queue backpressure.
+- 16MB high-throughput TCP socket buffer tuning (`rmem_max` / `wmem_max = 16M`) to eliminate bandwidth-delay product bottlenecks.
+- AN7581 1.2GHz dynamic cpufreq governor unlock and disabled unused Samba4/wsdd2 services saving ~50MB physical RAM out of the box.
 - Out-of-the-box support for `xupnpd` (DLNA IPTV streaming), `luci-app-arpbind` (static IP/MAC anti-drift binding), and `luci-app-autoreboot` (scheduled auto-restart).
 - Pre-configured shell alias `alias iperf3='iperf3 -A 3'` pinning speedtests to Core 3, avoiding network interrupt starvation on other cores.
 
