@@ -53,7 +53,7 @@
 - 彻底解决 Sing-Box / Momo 在原版 PonWrt 上开启 `auto_redirect: true` 时因缺少内核 Netfilter 队列驱动而崩溃报错的问题：
   > `FATAL[0000] start nfqueue: could not unbind existing handlers: netlink receive: invalid argument (-EINVAL)`
 - 实测支持 Sing-Box TUN 模式原生全自动流量重定向拦截（局域网透明网关），无需多余且脆弱的自定义 nftables 脚本。
-- 适配 Momo（`core_only='1'`），解除默认 `60MiB` 硬编码内存限制并放宽至 `128MiB`，预设 `224.0.0.0/4`、`239.0.0.0/8` 组播流量直连绕行。
+- 预置 Momo 纯核心模式（`core_only='1'`），流量分流与直连旁路完全遵循用户 `sing-box` 订阅规则，并预设 `GOMEMLIMIT=128MiB` 健康堆内存上限。
 
 ### 5. 第一性原理纯净加解密流水线（移除 SafeXcel/EIP-93 异构负优化，回归 CPU 原生高通量）
 - **根治异构 DMA 性能倒挂**：深入遵从第一性原理与 upstream ImmortalWrt 官方最新实践（commit `da63f7d`），**彻底剔除 `kmod-crypto-hw-eip93` 协处理器驱动与 `kmod-cryptodev`**。

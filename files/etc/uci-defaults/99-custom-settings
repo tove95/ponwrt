@@ -142,22 +142,17 @@ if [ -f /etc/init.d/sing-box ]; then
 fi
 rm -f /etc/rc.d/S*sing-box 2>/dev/null
 
-# 4. 预置 momo 纯核心模式、大陆 IP/IPv6 绝对直连旁路（保障微信视频/国内流量零劫持）、128MiB 健康堆内存上限（适配 ZN504 512MB RAM）、IPTV 组播绝对绕行、定时重启与日志自动清理
+# 4. 预置 momo 纯核心模式（分流与旁路规则完全遵循 sing-box 订阅与原生 auto_redirect）、128MiB 健康堆内存上限（适配 512MB RAM）、定时重启与日志自动清理
 if [ -f /etc/config/momo ]; then
     uci -q batch <<EOF
 set momo.config.core_only='1'
 set momo.procd.env_go_mem_limit='128MiB'
-set momo.proxy.bypass_china_mainland_ip='1'
-set momo.proxy.bypass_china_mainland_ip6='1'
 set momo.log.scheduled_clear='1'
 set momo.log.scheduled_clear_size_limit='1'
 set momo.log.scheduled_clear_size_limit_unit='MB'
 set momo.log.scheduled_clear_cron='*/5 * * * *'
 set momo.config.scheduled_restart='1'
 set momo.config.scheduled_restart_cron='0 4 * * *'
-add_list momo.proxy.reserved_ip='192.0.0.0/24'
-add_list momo.proxy.reserved_ip='224.0.0.0/4'
-add_list momo.proxy.reserved_ip='239.0.0.0/8'
 commit momo
 EOF
 fi

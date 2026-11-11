@@ -53,7 +53,7 @@ Every release automatically compiles and packages **both devices** into separate
 - Completely solves the crash when enabling `auto_redirect: true` in Sing-Box / Momo on stock PonWrt:
   > `FATAL[0000] start nfqueue: could not unbind existing handlers: netlink receive: invalid argument (-EINVAL)`
 - Enables native transparent proxy redirection via Sing-Box TUN mode without requiring complex custom nftables scripting.
-- Optimized for Momo (`core_only='1'`), lifting the default 60MiB hard-coded memory restriction to `128MiB` with direct bypass routing for multicast `224.0.0.0/4` and `239.0.0.0/8`.
+- Preset Momo in core-only mode (`core_only='1'`) so traffic routing and bypass rules follow the user's `sing-box` subscription cleanly, with `GOMEMLIMIT=128MiB`.
 
 ### 5. First-Principles Pure Crypto Pipeline (Removed SafeXcel/EIP-93 Negative Acceleration)
 - **Eliminating DMA & IRQ Overhead**: Following First Principles and official upstream ImmortalWrt practices (commit `da63f7d`), **`kmod-crypto-hw-eip93` and `kmod-cryptodev` have been completely removed**.
