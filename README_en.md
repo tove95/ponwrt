@@ -2,16 +2,16 @@
 
 [简体中文](README.md) | English
 
-[![GitHub Actions Build Status](https://img.shields.io/github/actions/workflow/status/wuziwei/ponwrt-ZN504/build-zn504.yml?branch=master&style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504/actions)
-[![Latest Release](https://img.shields.io/github/v/release/wuziwei/ponwrt-ZN504?style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504/releases)
-[![Target](https://img.shields.io/badge/SoC-Airoha%20AN7581-blue?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
-[![Device](https://img.shields.io/badge/Device-ZN504%20%26%20HG5585F-green?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
-[![Kernel](https://img.shields.io/badge/Kernel-Linux%206.18-informational?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
+[![GitHub Actions Build Status](https://img.shields.io/github/actions/workflow/status/wuziwei/ponwrt-ZN504-HG5585F/build-zn504.yml?branch=master&style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504-HG5585F/actions)
+[![Latest Release](https://img.shields.io/github/v/release/wuziwei/ponwrt-ZN504-HG5585F?style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504-HG5585F/releases)
+[![Target](https://img.shields.io/badge/SoC-Airoha%20AN7581-blue?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504-HG5585F)
+[![Device](https://img.shields.io/badge/Device-ZN504%20%26%20HG5585F-green?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504-HG5585F)
+[![Kernel](https://img.shields.io/badge/Kernel-Linux%206.18-informational?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504-HG5585F)
 [![License](https://img.shields.io/badge/License-GPL--2.0-orange?style=flat-square)](LICENSE)
 
 Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) / Linux `6.18`) firmware engineered for dual flagship Airoha AN7581 optical gateways:
 * **ZN504XG-D (`znxt_zn504xg-d`)**: Pure wired 2.5G high-performance ONT (EN8811H 2.5G port + 3×GbE)
-* **FiberHome HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-ct-usb-sfp`)**: Wi-Fi 6 ONT (Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED hardware acceleration, includes Telecom USB 2.0 variant)
+* **FiberHome HG5585F CT (`fiberhome_hg5585f-ct`)**: Wi-Fi 6 ONT (Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED hardware acceleration, native USB 2.0 configuration)
 
 Every release automatically compiles and packages **both devices** into separate flashable images!
 
@@ -85,16 +85,14 @@ Every release automatically compiles and packages **both devices** into separate
 
 ## 📦 Firmware Downloads (Releases)
 
-Download production-tested images from [GitHub Releases](https://github.com/wuziwei/ponwrt-ZN504/releases):
+Download production-tested images from [GitHub Releases](https://github.com/wuziwei/ponwrt-ZN504-HG5585F/releases) (4 clean images per build):
 
 | Target Device | Firmware Filename | Usage |
 | :--- | :--- | :--- |
 | **ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb` | **Standard Sysupgrade (Recommended)**, preserves settings |
 | **ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
-| **HG5585F (CT Telecom USB 2.0)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-usb-sfp-squashfs-sysupgrade.itb` | **Telecom USB 2.0 Sysupgrade (Recommended)**, includes MT7916 Wi-Fi |
-| **HG5585F (CT Telecom USB 2.0)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-usb-sfp-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
-| **HG5585F (CT Telecom Standard)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-squashfs-sysupgrade.itb` | **Telecom Standard Sysupgrade**, includes MT7916 Wi-Fi |
-| **HG5585F (CT Telecom Standard)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
+| **HG5585F (CT Telecom)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-squashfs-sysupgrade.itb` | **Standard Sysupgrade (Recommended)**, native USB 2.0 & MT7916 Wi-Fi |
+| **HG5585F (CT Telecom)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
 
 ---
 
