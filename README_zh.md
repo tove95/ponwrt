@@ -70,6 +70,9 @@
 ### 7. 流卸载策略 (Flow Offloading) 与局域网维护增强
 - 默认开启 Firewall4 软件与硬件 PPE 流卸载（`flow_offloading='1'`, `flow_offloading_hw='1'`），经 Linux 6.18.60 实测通过长时间高通量与 PPPoE over VLAN 稳定性验证，支持由达发 8 核 NPU / PPE 引擎完成硬件 Fastpath 线速直转，有效释放 4 核 Cortex-A53 CPU 负载并降低芯片发热。
 - 防火墙 `wan` 区域原生绑定 `wan_6` 动态 IPv6 接口，确保外网连接跟踪与状态机 100% 同步。
+- 局域网广播免连接跟踪（`NOTRACK`）：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
+- 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈，提升 4K 串流与并发吞吐。
+- 解锁 AN7581 4 核 1.2GHz 动态满频算力（空闲 500MHz 极度省电清凉，重载秒升 1.2GHz），默认停用未配置硬盘的闲置 Samba4/wsdd2 服务，开机净省近 40MB 物理内存。
 - 开箱内置 `xupnpd`（DLNA IPTV 直播推流）、`luci-app-arpbind`（IP/MAC 静态防漂移绑定）、`luci-app-autoreboot`（计划定时健康自愈重启）。
 - 环境变量注入 `alias iperf3='iperf3 -A 3'`，强制独占 4 核中的 Core 3 测速，彻底避开网卡与系统软中断。
 

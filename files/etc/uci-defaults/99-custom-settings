@@ -256,4 +256,46 @@ fi
 /etc/init.d/samba4 disable 2>/dev/null || true
 /etc/init.d/wsdd2 disable 2>/dev/null || true
 
+# 11. QWRT 精华调优移植：SSDP/WSD 组播免连接跟踪 (NOTRACK) 与 16MB 万兆 TCP 套接字大缓冲区
+# 避免 UPnP/WSD 局域网广播进入 conntrack 跟踪，杜绝交换芯片 CDM 队列丢包告警
+uci -q batch <<EOF
+set firewall.upnp_ssdp_notrack=rule
+set firewall.upnp_ssdp_notrack.name='UPnP SSDP multicast discovery'
+set firewall.upnp_ssdp_notrack.src='lan'
+set firewall.upnp_ssdp_notrack.family='ipv4'
+set firewall.upnp_ssdp_notrack.proto='udp'
+set firewall.upnp_ssdp_notrack.dest_ip='239.255.255.250'
+set firewall.upnp_ssdp_notrack.dest_port='1900'
+set firewall.upnp_ssdp_notrack.target='NOTRACK'
+
+set firewall.wsd_ipv4_notrack=rule
+set firewall.wsd_ipv4_notrack.name='WSD IPv4 multicast discovery'
+set firewall.wsd_ipv4_notrack.src='lan'
+set firewall.wsd_ipv4_notrack.family='ipv4'
+set firewall.wsd_ipv4_notrack.proto='udp'
+set firewall.wsd_ipv4_notrack.dest_ip='239.255.255.250'
+set firewall.wsd_ipv4_notrack.dest_port='3702'
+set firewall.wsd_ipv4_notrack.target='NOTRACK'
+
+set firewall.wsd_ipv6_notrack=rule
+set firewall.wsd_ipv6_notrack.name='WSD IPv6 multicast discovery'
+set firewall.wsd_ipv6_notrack.src='lan'
+set firewall.wsd_ipv6_notrack.family='ipv6'
+set firewall.wsd_ipv6_notrack.proto='udp'
+set firewall.wsd_ipv6_notrack.dest_ip='ff02::c'
+set firewall.wsd_ipv6_notrack.dest_port='3702'
+set firewall.wsd_ipv6_notrack.target='NOTRACK'
+commit firewall
+EOF
+
+# 扩大 TCP 读写套接字缓冲区至 16MB，消除大带宽长肥管道瓶颈，提升 4K 串流与并发吞吐
+mkdir -p /etc/sysctl.d
+cat <<'EOF' > /etc/sysctl.d/30-network-buffers.conf
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 87380 16777216
+net.ipv4.tcp_wmem=4096 65536 16777216
+EOF
+sysctl -p /etc/sysctl.d/30-network-buffers.conf 2>/dev/null || true
+
 exit 0
