@@ -132,17 +132,14 @@ jobs:
               - 移植 QWRT SSDP (`239.255.255.250:1900`) 与 WSD (`3702`) `NOTRACK` 局域网广播旁路，防止连接跟踪表与交换芯片 CDM 队列膨胀
               - 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈
               - 解锁 AN7581 4 核 1.2GHz 动态满频调频，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
-            * **集成 QWRT 推荐特性**：
+            * **集成 QWRT 核心硬件特性**：
               - 片上 Inside Secure SafeXcel EIP-93 硬件密码协处理器驱动 (`kmod-crypto-hw-eip93`, `kmod-cryptodev`)
               - Airoha AN7581 NPU / PPE 硬件流量转发加速 (`luci-app-airoha-npu`, `luci-app-hqos`)
               - CPU 调频策略与频率管理 (`luci-app-cpufreq`)
-              - 内存整理与缓存释放 (`luci-app-ramfree`)
               - 磁盘与存储分区管理 (`luci-app-diskman`)
-              - 网页终端 (`luci-app-ttyd`) 与 文件传输 (`luci-app-filetransfer`)
-            * **集成 QWRT 可选特性**：
-              - Samba4 / KSMBD 高速文件共享 (`luci-app-samba4`)
-              - 集客无线 AC 控制器 (`luci-app-gecoosac`)
-              - 高级网络唤醒 (`luci-app-wolultra`)
+              - 网页终端 (`luci-app-ttyd`)
+            * **精简纯净架构**：
+              - 彻底移除冗余重型插件（Lucky、Samba4、集客AC、WOL、AutoReboot、UPnP、RAMFree），大幅减小固件体积并缩短编译时间
             * **集成 Kahen 项目精华**：
               - 修复 SoC 与光模块温度上报 (`temperature-rpc.uc` + `/sbin/tempinfo` RPC 联动)
               - MTD 读写支持 (`kmod-mtd-rw`)，保障工厂/校准分区备份

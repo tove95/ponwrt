@@ -19,16 +19,7 @@ else
     echo "[OK] luci-app-airoha-npu is present"
 fi
 
-# 2. 确保 lucky 与 luci-app-lucky 处于可用状态
-if [ ! -d "./package/luci-app-lucky" ] || [ ! -d "./package/lucky" ]; then
-    echo "--> Cloning luci-app-lucky & lucky..."
-    rm -rf ./package/luci-app-lucky ./package/lucky
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-lucky.git ./package/luci-app-lucky
-else
-    echo "[OK] lucky and luci-app-lucky are present"
-fi
-
-# 3. 确保 nikkinikki OpenWrt-momo (Momo + sing-box 核心) 处于可用状态
+# 2. 确保 nikkinikki OpenWrt-momo (Momo + sing-box 核心) 处于可用状态
 if [ ! -d "./package/luci-app-momo" ]; then
     echo "--> Cloning OpenWrt-momo..."
     git clone --depth 1 https://github.com/nikkinikki-org/OpenWrt-momo.git ./package/luci-app-momo
@@ -36,7 +27,7 @@ else
     echo "[OK] luci-app-momo is present"
 fi
 
-# 4. 集成 Kahen 精华：luci-theme-footstrap (轻量响应式主题)
+# 3. 集成 Kahen 精华：luci-theme-footstrap (轻量响应式主题)
 if [ ! -d "./package/luci-theme-footstrap" ]; then
     echo "--> Importing luci-theme-footstrap..."
     tmp_theme="$(mktemp -d)"
@@ -49,22 +40,7 @@ if [ ! -d "./package/luci-theme-footstrap" ]; then
     rm -rf "$tmp_theme"
 fi
 
-# 5. 集成 QWRT/Kahen 精选：GecoosAC (集客无线AC控制器) 与 WOL Ultra (高级网络唤醒)
-if [ ! -d "./package/viking-packages" ]; then
-    echo "--> Importing GecoosAC and WOL Ultra..."
-    tmp_viking="$(mktemp -d)"
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/VIKINGYFY/packages.git "$tmp_viking/packages" 2>/dev/null || true
-    if [ -d "$tmp_viking/packages" ]; then
-        git -C "$tmp_viking/packages" sparse-checkout set gecoosac luci-app-gecoosac luci-app-wolultra 2>/dev/null || true
-        mkdir -p ./package/viking-packages
-        for pkg in gecoosac luci-app-gecoosac luci-app-wolultra; do
-            [ -d "$tmp_viking/packages/$pkg" ] && cp -a "$tmp_viking/packages/$pkg" "./package/viking-packages/"
-        done
-    fi
-    rm -rf "$tmp_viking"
-fi
-
-# 6. 集成 Kahen 精华：自动连接 autocore 温度检测至 LuCI 状态界面
+# 4. 集成 Kahen 精华：自动连接 autocore 温度检测至 LuCI 状态界面
 if [ -f "./scripts/integrate-temperature.py" ]; then
     echo "--> Running temperature integration..."
     python3 ./scripts/integrate-temperature.py . || true
