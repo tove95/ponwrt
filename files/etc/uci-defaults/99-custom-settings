@@ -236,4 +236,24 @@ elif [ -x /usr/sbin/restore-fiberhome-pon.sh ] && [ ! -s /etc/config/pon ] && [ 
     /usr/sbin/restore-fiberhome-pon.sh 2>/dev/null || true
 fi
 
+# 10. CPU 睿频动态调度与轻量化内存释放
+# 解锁 AN7581 4核 1.2GHz 满频算力（空闲 500MHz，重载 1.2GHz 瞬间拉升）
+if [ -f /etc/config/cpufreq ]; then
+    uci -q batch <<EOF
+set cpufreq.cpufreq=settings
+set cpufreq.cpufreq.governor0='ondemand'
+set cpufreq.cpufreq.minfreq0='500000'
+set cpufreq.cpufreq.maxfreq0='1200000'
+set cpufreq.cpufreq.sdfactor0='10'
+set cpufreq.cpufreq.upthreshold0='50'
+set cpufreq.global=settings
+set cpufreq.global.set='1'
+commit cpufreq
+EOF
+fi
+
+# 默认关闭纯光猫网关未使用的 Samba4 与 wsdd2 文件共享，开机净省 ~40MB 物理内存
+/etc/init.d/samba4 disable 2>/dev/null || true
+/etc/init.d/wsdd2 disable 2>/dev/null || true
+
 exit 0

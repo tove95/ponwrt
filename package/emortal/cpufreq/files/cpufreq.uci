@@ -34,6 +34,10 @@ case "$DISTRIB_TARGET" in
 		# IPQ8064/5
 		echo "$CPU_POLICYS" | grep -q "1" && uci_write_config 1 performance 600000 1200000
 		;;
+	"airoha/an7581"|\
+	"airoha/generic")
+		uci_write_config 0 ondemand 500000 1200000 10 50
+		;;
 	"mediatek/mt7622")
 		uci_write_config 0 ondemand 600000 1350000 10 50
 		;;
