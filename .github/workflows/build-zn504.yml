@@ -41,10 +41,28 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          BEST_MIRROR=""
+          for m in \
+            https://mirrors.edge.kernel.org/ubuntu \
+            http://us.archive.ubuntu.com/ubuntu \
+            http://mirror.rackspace.com/ubuntu \
+            https://mirror.math.princeton.edu/pub/ubuntu \
+            http://archive.ubuntu.com/ubuntu \
+            http://azure.archive.ubuntu.com/ubuntu; do
+            if curl -4 -fsIL --max-time 5 "$m/dists/noble/InRelease" >/dev/null 2>&1; then
+              BEST_MIRROR="$m"
+              break
+            fi
+          done
+          if [ -n "$BEST_MIRROR" ]; then
+            echo "Selected live Ubuntu mirror: $BEST_MIRROR"
+            [ -f /etc/apt/apt-mirrors.txt ] && echo "$BEST_MIRROR" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+            [ -f /etc/apt/sources.list.d/ubuntu.sources ] && sudo sed -i -E "s|https?://(azure\.archive|archive|security)\.ubuntu\.com/ubuntu|$BEST_MIRROR|g" /etc/apt/sources.list.d/ubuntu.sources
+          fi
           sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout 300 \
-            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 update
-          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout 300 \
-            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 \
+            apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout 600 \
+            apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             install -y --no-install-recommends \
             asciidoc autoconf automake autopoint binutils bison build-essential \
