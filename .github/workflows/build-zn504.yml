@@ -104,13 +104,13 @@ jobs:
 
       - name: Generate release tag
         id: tag
-        if: github.event.inputs.upload_release == 'true' || startsWith(github.ref, 'refs/tags/')
+        if: github.event.inputs.upload_release != 'false'
         run: |
           echo "release_tag=ZN504XG-D-$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
 
       - name: Upload firmware to GitHub Release
         uses: softprops/action-gh-release@v2
-        if: github.event.inputs.upload_release == 'true' || startsWith(github.ref, 'refs/tags/')
+        if: github.event.inputs.upload_release != 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -120,6 +120,12 @@ jobs:
             ### PonWrt ZN504XG-D 聚合增强固件 (Airoha AN7581)
             * **适用机型**：烽火 / 中移 ZN504XG-D (Airoha AN7581 + EN8811H 2.5G 网口)
             * **后台管理**：`192.168.1.1`（用户名: `root`，默认无密码）
+            * **默认启用硬件 PPE 与最新性能优化**：
+              - 默认启用 Airoha 8 核 NPU / PPE 硬件流量卸载 (`flow_offloading_hw=1`)，实现千兆与 2.5G Fastpath 线速转发
+              - 移植 QWRT 内存防碎片参数 (`vm.percpu_pagelist_high_fraction = 128`)，提升高通量多核并发页面分配效率
+              - 移植 QWRT SSDP (`239.255.255.250:1900`) 与 WSD (`3702`) `NOTRACK` 局域网广播旁路，防止连接跟踪表与交换芯片 CDM 队列膨胀
+              - 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈
+              - 解锁 AN7581 4 核 1.2GHz 动态满频调频，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
             * **集成 QWRT 推荐特性**：
               - 片上 Inside Secure SafeXcel EIP-93 硬件密码协处理器驱动 (`kmod-crypto-hw-eip93`, `kmod-cryptodev`)
               - Airoha AN7581 NPU / PPE 硬件流量转发加速 (`luci-app-airoha-npu`, `luci-app-hqos`)
