@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+an7581_bsp_valid_wifi_mac() {
+	[ "$1" != "00:00:00:00:00:00" ] &&
+		printf '%s\n' "$1" | grep -Eq '^[[:xdigit:]][02468aAcCeE](:[[:xdigit:]]{2}){5}$'
+}
+
+an7581_bsp_wifi_mac() {
+	local board ubidev volume factory base mac24 mac5 mac6
+	case "$(uname -r)" in 5.4.*|6.18.*|7.3|7.3.*) ;; *) return 0 ;; esac
+	board=$(board_name)
+	case "$board" in gemtek,xr1710g-ubi|znxt,zn515xg-d|h3c,hm2004-du|nokia,valyrian|fiberhome,hg5585f-ct|fiberhome,hg5585f-ct-usb-sfp|fiberhome,hg5585f-cu|fiberhome,hg5585f-cu-usb-sfp) ;; *) return 0 ;; esac
+	. /lib/functions/system.sh
+	. /lib/upgrade/nand.sh
+	if [ "$board" = "nokia,valyrian" ]; then
+		factory=$(find_mmc_part factory)
+		[ -n "$factory" ] || return 0
+	else
+		ubidev=$(nand_find_ubi ubi)
+		[ -n "$ubidev" ] || return 0
+		volume=$(nand_find_volume "$ubidev" factory)
+		[ -n "$volume" ] || return 0
+		factory="/dev/$volume"
+	fi
+	case "$board" in
+	gemtek,xr1710g-ubi)
+		# Match the installed board DT: factory LAN base plus 1/2/3.
+		base=$(get_mac_binary "$factory" 24576)
+		an7581_bsp_valid_wifi_mac "$base" || return 0
+		mac24=$(macaddr_add "$base" 1)
+		mac5=$(macaddr_add "$base" 2)
+		mac6=$(macaddr_add "$base" 3)
+		an7581_bsp_valid_wifi_mac "$mac6" || return 0
+		;;
+	fiberhome,hg5585f-ct|fiberhome,hg5585f-ct-usb-sfp|fiberhome,hg5585f-cu|fiberhome,hg5585f-cu-usb-sfp)
+		base=$(get_mac_binary "$factory" 8192)
+		an7581_bsp_valid_wifi_mac "$base" || return 0
+		# Keep radios outside the base/base+1 wired address pair.
+		mac24=$(macaddr_add "$base" 6)
+		mac5=$(macaddr_add "$base" 7)
+		;;
+	znxt,zn515xg-d)
+		base=$(dd if="$factory" bs=1 skip=1314852 count=12 2>/dev/null | sed 's/../&:/g;s/:$//')
+		an7581_bsp_valid_wifi_mac "$base" || return 0
+		mac24=$(macaddr_add "$base" 4)
+		mac5=$(macaddr_add "$base" 5)
+		;;
+	h3c,hm2004-du)
+		mac24=$(get_mac_binary "$factory" 80)
+		mac5=$(get_mac_binary "$factory" 64)
+		;;
+	nokia,valyrian)
+		base=$(get_mac_binary "$factory" 2883584)
+		an7581_bsp_valid_wifi_mac "$base" || return 0
+		mac24=$(macaddr_add "$base" 6)
+		mac5=$(macaddr_add "$base" 7)
+		mac6=$(macaddr_add "$base" 8)
+		an7581_bsp_valid_wifi_mac "$mac6" || return 0
+		;;
+	esac
+	# Per-device addresses must be ready before mtwifi_service writes profiles.
+	an7581_bsp_valid_wifi_mac "$mac24" || return 0
+	an7581_bsp_valid_wifi_mac "$mac5" || return 0
+	printf '%s\n' "$mac24" > /tmp/mtwifi-macaddr.0
+	printf '%s\n' "$mac5" > /tmp/mtwifi-macaddr.1
+	[ -z "$mac6" ] || printf '%s\n' "$mac6" > /tmp/mtwifi-macaddr.2
+}
+
+boot_hook_add preinit_main an7581_bsp_wifi_mac

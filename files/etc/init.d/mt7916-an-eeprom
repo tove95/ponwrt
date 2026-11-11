@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+
+# Prepare calibration before mtwifi_service (09) and kmodloader (10).
+# Opening a radio from a hotplug callback can otherwise wait for firmware
+# whose extraction is queued behind that same callback on first boot.
+START=08
+
+start() {
+	. /lib/functions.sh
+
+	case "$(board_name)" in
+		fiberhome,hg5585f-ct|fiberhome,hg5585f-cu|znxt,zn515xg-d|h3c,hm2004-du) ;;
+		*) return 0 ;;
+	esac
+
+	FIRMWARE=mt7916-an-eeprom.bin /bin/sh /etc/hotplug.d/firmware/10-mt7916-an-eeprom || {
+		logger -t mt7916-an-eeprom "Failed to prepare radio calibration"
+		return 1
+	}
+}

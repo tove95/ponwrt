@@ -1,21 +1,32 @@
-# PonWrt 6.18 for 兆能 ZN504XG-D (Airoha AN7581)
+# PonWrt 6.18 for ZN504XG-D & HG5585F (Airoha AN7581)
 
 English | [简体中文](README_zh.md)
 
 [![GitHub Actions Build Status](https://img.shields.io/github/actions/workflow/status/wuziwei/ponwrt-ZN504/build-zn504.yml?branch=master&style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504/actions)
 [![Latest Release](https://img.shields.io/github/v/release/wuziwei/ponwrt-ZN504?style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504/releases)
 [![Target](https://img.shields.io/badge/SoC-Airoha%20AN7581-blue?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
-[![Device](https://img.shields.io/badge/Device-ZNXT%20ZN504XG--D-green?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
+[![Device](https://img.shields.io/badge/Device-ZN504%20%26%20HG5585F-green?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
 [![Kernel](https://img.shields.io/badge/Kernel-Linux%206.18-informational?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
 [![License](https://img.shields.io/badge/License-GPL--2.0-orange?style=flat-square)](LICENSE)
 
-Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) / Linux `6.18`) firmware specifically engineered for the **ZNXT (兆能) ZN504XG-D (`znxt_zn504xg-d`)** 10G PON optical modem / gateway, powered by the Airoha AN7581 quad-core ARM64 SoC.
+Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) / Linux `6.18`) firmware engineered for dual flagship Airoha AN7581 optical gateways:
+* **ZN504XG-D (`znxt_zn504xg-d`)**: Pure wired 2.5G high-performance ONT (EN8811H 2.5G port + 3×GbE)
+* **FiberHome HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-cu`)**: Wi-Fi 6 ONT (Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED hardware acceleration)
+
+Every release automatically compiles and packages **both devices** into separate flashable images!
 
 ---
 
 ## 🌟 Key Features & Architectural Enhancements
 
-### 1. Full-Stack Airoha AN7581 Native PON Drivers
+### 1. FiberHome HG5585F MT7916 Wi-Fi 6 & NPU WED Offload Integration
+- **MT7916D DBDC Dual-Band Wireless**: Integrated `kmod-mt7915e` driver and `kmod-mt7916-firmware`, delivering 2.4G 2x2 + 5G 3x3 AX3000 Wi-Fi 6 concurrency.
+- **Airoha NPU / WED Hardware Offload**: Bundled `en7581_MT7916_npu_rv32.bin` and `en7581_MT7916_npu_data.bin`. The 8-core RISC-V NPU directly routes wireless RX DMA and WED TX frames for zero-CPU line-rate throughput.
+- **Automated Factory EEPROM Extraction**: Integrated `/etc/hotplug.d/firmware/10-mt7916-an-eeprom` and `/etc/init.d/mt7916-an-eeprom` (executed at `START=08` prior to driver probing). Extracts the 4KB calibration block from UBI `factory` offset `0x1000` and validates the `0x7916` magic bytes.
+- **Preinit Wireless MAC Calculation**: Embedded `/lib/preinit/07_an7581_bsp_wifi_mac` automatically reads the base MAC and assigns 2.4G (`base + 6`) and 5G (`base + 7`) hardware addresses.
+- **RF Power Tables**: Integrated `SingleSKU` and `mt7916-sku.dat` beamforming data.
+
+### 2. Full-Stack Airoha AN7581 Native PON Drivers
 - Integrated `kmod-airoha-xpon`, `kmod-airoha-en7572` (BOSA), `kmod-phy-airoha-en8811h` (2.5G PHY), and `airoha-en7581-npu-firmware` (NPU hardware offload).
 - Integrated `airoha-pond`, `airoha-ponctl`, and `luci-app-pon`.
 - Supports GPON / XG-PON / XGS-PON **O5 operational state** registration and verification, with full configuration of Vendor ID (e.g., `FHTT`), Equipment ID (e.g., `HS8145X6 (PON ONT)`), PON SN, LOID, password, cloned MAC, and BOSA calibration volume preservation.

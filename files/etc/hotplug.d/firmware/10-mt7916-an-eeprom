@@ -1,0 +1,38 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+
+[ "$FIRMWARE" = "mt7916-an-eeprom.bin" ] || [ "$FIRMWARE" = "mediatek/mt7916_eeprom.bin" ] || exit 0
+[ -e "/lib/firmware/$FIRMWARE" ] && exit 0
+
+. /lib/functions.sh
+. /lib/upgrade/nand.sh
+
+case "$(board_name)" in
+	znxt,zn515xg-d|h3c,hm2004-du)
+		# These boards ship an RF template and require the DT-selected
+		# per-chip iCal merge before radio initialization can succeed.
+		calfile=/lib/firmware/mediatek/mt7916_eeprom.bin
+		[ "$(wc -c < "$calfile")" -eq 4096 ] || exit 1
+		[ "$(hexdump -v -n 2 -e '1/1 "%02x"' "$calfile")" = "1679" ] || exit 1
+		ln -s "$calfile" "/lib/firmware/$FIRMWARE"
+		exit $?
+		;;
+	fiberhome,hg5585f-ct|fiberhome,hg5585f-cu) ;;
+	*) exit 1 ;;
+esac
+ubidev=$(nand_find_ubi ubi)
+[ -n "$ubidev" ] || exit 1
+volume=$(nand_find_volume "$ubidev" factory)
+[ -n "$volume" ] || exit 1
+
+umask 077
+mkdir -p /lib/firmware
+calfile=$(mktemp /lib/firmware/.mt7916-eeprom.XXXXXX) || exit 1
+trap 'rm -f "$calfile"' EXIT
+# This layout is shared with the mainline HG5585F factory NVMEM cell.
+dd if="/dev/$volume" of="$calfile" bs=4096 skip=1 count=1 2>/dev/null || exit 1
+[ "$(wc -c < "$calfile")" -eq 4096 ] || exit 1
+[ "$(hexdump -v -n 2 -e '1/1 "%02x"' "$calfile")" = "1679" ] || exit 1
+mv "$calfile" "/lib/firmware/mt7916-an-eeprom.bin"
+mkdir -p /lib/firmware/mediatek
+ln -sf /lib/firmware/mt7916-an-eeprom.bin /lib/firmware/mediatek/mt7916_eeprom.bin

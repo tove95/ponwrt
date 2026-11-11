@@ -1,4 +1,4 @@
-name: Build PonWrt ZN504XG-D (Enhanced)
+name: Build PonWrt (ZN504XG-D & HG5585F)
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build ZN504XG-D
+    name: Build ZN504XG-D & HG5585F
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -86,7 +86,7 @@ jobs:
       - name: Organize output files
         run: |
           mkdir -p output
-          find bin/targets/airoha/an7581/ -type f \( -name "*zn504*" -o -name "*sysupgrade*" -o -name "*ubi*" \) -exec cp {} output/ \;
+          find bin/targets/airoha/an7581/ -type f \( -name "*zn504*" -o -name "*hg5585f*" \) \( -name "*sysupgrade.itb" -o -name "*recovery.itb" -o -name "*manifest" \) -exec cp {} output/ \;
           cd output
           for file in $(ls * 2>/dev/null); do
             [ -f "$file" ] && sha256sum "$file" > "${file}.sha256"
@@ -95,10 +95,10 @@ jobs:
           ls -lh
           echo "FIRMWARE_DIR=$PWD" >> $GITHUB_ENV
 
-      - name: Upload ZN504 Firmware Artifact
+      - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ZN504XG-D-enhanced-firmware
+          name: PonWrt-ZN504-HG5585F-enhanced-firmware
           path: output/*
           retention-days: 14
 
@@ -106,7 +106,7 @@ jobs:
         id: tag
         if: github.event.inputs.upload_release != 'false'
         run: |
-          echo "release_tag=ZN504XG-D-$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+          echo "release_tag=v$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
 
       - name: Upload firmware to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -115,11 +115,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: PonWrt ZN504XG-D 聚合增强固件 (${{ steps.tag.outputs.release_tag }})
+          name: PonWrt ZN504XG-D & HG5585F 双机型聚合增强固件 (${{ steps.tag.outputs.release_tag }})
           body: |
-            ### PonWrt ZN504XG-D 聚合增强固件 (Airoha AN7581)
-            * **适用机型**：烽火 / 中移 ZN504XG-D (Airoha AN7581 + EN8811H 2.5G 网口)
+            ### PonWrt Airoha AN7581 聚合增强固件 (ZN504XG-D & HG5585F)
+            * **适用机型**：
+              - **烽火/中移 ZN504XG-D**：纯有线 2.5G 高性能光猫（AN7581 + EN8811H 2.5G 网口）
+              - **烽火 HG5585F (CT 电信版 / CU 联通版)**：带 Wi-Fi 6 (MT7916D DBDC AX3000 + NPU WED 硬件加速)
             * **后台管理**：`192.168.1.1`（用户名: `root`，默认无密码）
+            * **Wi-Fi 7 / 6 特性 (HG5585F)**：
+              - 集成 MediaTek MT7916 驱动与 NPU WED 硬件加速固件 (`en7581_MT7916_npu_rv32.bin`)
+              - 预置板载 factory 8192 偏移校准与 `07_an7581_bsp_wifi_mac` 独立 MAC 算号
+              - 预置 `SingleSKU` 与 `mt7916-sku.dat` 射频功率校准表
             * **默认启用硬件 PPE 与最新性能优化**：
               - 默认启用 Airoha 8 核 NPU / PPE 硬件流量卸载 (`flow_offloading_hw=1`)，实现千兆与 2.5G Fastpath 线速转发
               - 移植 QWRT 内存防碎片参数 (`vm.percpu_pagelist_high_fraction = 128`)，提升高通量多核并发页面分配效率
