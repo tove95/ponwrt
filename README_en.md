@@ -39,8 +39,10 @@ Every release automatically compiles and packages **both devices** into separate
 - **Clean Network Generation**: Prevents redundant `wan6` DHCPv6 interface creation on DHCP networks to avoid dual-stack route competition.
 - Live telemetry for Rx/Tx optical power, operating voltage, and SoC temperature.
 
-### 3. Airoha 8-Core NPU / PPE Hardware Flow Offloading (Fastpath)
-- Hardware PPE flow offloading (`flow_offloading='1'`, `flow_offloading_hw='1'`) enabled by default. Full line-rate Gigabit and 2.5G throughput reduces quad-core A53 CPU utilization to ~**4.5%**.
+### 3. Core Routing & Real-Time Audio/Video Zero-Stutter Optimization
+- Flowtable offloading disabled by default (`flow_offloading='0'`, `flow_offloading_hw='0'`): Completely eliminates Netfilter's `nf_flowtable_udp_timeout = 30s` periodic stalls on WeChat video / VoIP UDP streams. Quad-core A53 CPU easily forwards Gigabit traffic with <15% CPU load.
+- Multi-core `packet_steering` disabled: Prevents out-of-order UDP packet delivery on real-time RTP multimedia streams.
+- Bridge multicast forwarding optimization (`group_fwd_mask = 0x4000`): Forwards link-layer LLDP frames, preventing false `rx_dropped` alarms from downstream APs.
 - Backported QWRT memory anti-fragmentation optimization (`vm.percpu_pagelist_high_fraction = 128`), preventing high-concurrency page allocation stalls.
 - LAN Multicast Bypass (`NOTRACK`): UPnP SSDP (`239.255.255.250:1900`) and Windows WSD (`3702`) bypass conntrack, preventing table exhaustion.
 - 16MB TCP socket read/write buffers (`rmem_max` / `wmem_max = 16M`), eliminating long-fat network bottlenecks for 4K streaming.

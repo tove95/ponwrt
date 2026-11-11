@@ -39,8 +39,10 @@
 - **纯净网络配置生成**：修复并移除 `config_generate` 为 DHCP 网络自动生成冗余 `wan6` 客户端接口的逻辑，杜绝桥接与双栈网络下的 DHCPv6 广播风暴与接口路由冲突。
 - 实时光功率（接收/发射）、供电电压、芯片温度检测与全链路遥测告警。
 
-### 3. Airoha 8核 NPU / PPE 硬件流量卸载（Fastpath 线速直转）
-- 默认开启 Firewall4 硬件 PPE 流卸载（`flow_offloading='1'`, `flow_offloading_hw='1'`），经 Linux 6.18.60 实测通过长时间高通量与 PPPoE over VLAN 稳定性验证，由达发 8 核 NPU / PPE 引擎完成硬件线速直转，千兆拨号满速转发时 4 核 CPU 占用低至约 **4.5%**。
+### 3. 核心路由与实时音视频零丢包优化（微信视频/VoIP保序）
+- 默认关闭 Flowtable 流卸载（`flow_offloading='0'`，`flow_offloading_hw='0'`）：彻底根除 Linux 内核流表 `nf_flowtable_udp_timeout = 30s` 造成的微信视频/VoIP实时长连接周期性断流卡死与 UDP 乱序，Airoha AN7581 4 核 1.2GHz A53 强大算力由原生网络栈全速转发，千兆满速 CPU 占用低于 15%。
+- 默认关闭多核 `packet_steering`：避免多核哈希导致实时 UDP/RTP 音视频数据包乱序到达。
+- 网桥组播放行优化（`group_fwd_mask = 0x4000`）：原生放行链路层 LLDP 报文，彻底避免下挂 AP（如 WTA302）组播探针被网桥丢弃产生的 `rx_dropped` 误报警。
 - 移植 QWRT 内存防碎片参数（`vm.percpu_pagelist_high_fraction = 128`）：深度优化单核 page 列表阈值，彻底杜绝 4 核并发高吞吐下的物理内存碎片与分配延迟。
 - 局域网广播免连接跟踪（`NOTRACK`）：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
 - 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈，提升 4K 串流与并发吞吐。

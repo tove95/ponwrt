@@ -26,6 +26,8 @@ jobs:
     name: Build ZN504XG-D & HG5585F
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -126,8 +128,11 @@ jobs:
               - 集成 MediaTek MT7916 驱动与 NPU WED 硬件加速固件 (`en7581_MT7916_npu_rv32.bin`)
               - 预置板载 factory 8192 偏移校准与 `07_an7581_bsp_wifi_mac` 独立 MAC 算号
               - 预置 `SingleSKU` 与 `mt7916-sku.dat` 射频功率校准表
-            * **默认启用硬件 PPE 与最新性能优化**：
-              - 默认启用 Airoha 8 核 NPU / PPE 硬件流量卸载 (`flow_offloading_hw=1`)，实现千兆与 2.5G Fastpath 线速转发
+            * **核心网络与实时音视频保序优化**：
+              - 默认关闭 Flowtable 流卸载（`flow_offloading='0'`），彻底根治 Netfilter `nf_flowtable_udp_timeout=30s` 造成的微信视频/VoIP实时长连接周期性断流
+              - 默认关闭多核 `packet_steering`，避免 AN7581 多核乱序导致实时 UDP/RTP 抖动
+              - 预置 Momo 大陆 IP/IPv6 绝对直连旁路与 STUN 保障，保障国内流量零劫持
+              - 网桥放行 LLDP (0x4000)，杜绝下挂 AP 组播心跳导致网桥丢包统计异常
               - 移植 QWRT 内存防碎片参数 (`vm.percpu_pagelist_high_fraction = 128`)，提升高通量多核并发页面分配效率
               - 移植 QWRT SSDP (`239.255.255.250:1900`) 与 WSD (`3702`) `NOTRACK` 局域网广播旁路，防止连接跟踪表与交换芯片 CDM 队列膨胀
               - 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈
