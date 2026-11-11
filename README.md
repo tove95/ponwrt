@@ -1,6 +1,6 @@
-# PonWrt 6.18 for ZN504XG-D & HG5585F (Airoha AN7581)
+# PonWrt 6.18 for 兆能 ZN504XG-D & 烽火 HG5585F (Airoha AN7581)
 
-English | [简体中文](README_zh.md)
+简体中文 | [English](README_en.md)
 
 [![GitHub Actions Build Status](https://img.shields.io/github/actions/workflow/status/wuziwei/ponwrt-ZN504/build-zn504.yml?branch=master&style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504/actions)
 [![Latest Release](https://img.shields.io/github/v/release/wuziwei/ponwrt-ZN504?style=flat-square&logo=github)](https://github.com/wuziwei/ponwrt-ZN504/releases)
@@ -9,182 +9,163 @@ English | [简体中文](README_zh.md)
 [![Kernel](https://img.shields.io/badge/Kernel-Linux%206.18-informational?style=flat-square)](https://github.com/wuziwei/ponwrt-ZN504)
 [![License](https://img.shields.io/badge/License-GPL--2.0-orange?style=flat-square)](LICENSE)
 
-Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) / Linux `6.18`) firmware engineered for dual flagship Airoha AN7581 optical gateways:
-* **ZN504XG-D (`znxt_zn504xg-d`)**: Pure wired 2.5G high-performance ONT (EN8811H 2.5G port + 3×GbE)
-* **FiberHome HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-cu`)**: Wi-Fi 6 ONT (Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED hardware acceleration)
+本项目基于上游 [PonWrt](https://github.com/pbs05/ponwrt)（ImmortalWrt / Linux `6.18`），针对采用 **达发 Airoha AN7581 (4核 Cortex-A53 @ 1.2GHz + 8核 RISC-V NPU)** 主控的双旗舰机型进行深度工程化定制、硬件驱动加速与内核网络栈增强：
+* **兆能 ZN504XG-D (`znxt_zn504xg-d`)**：纯有线 2.5G 高性能光猫（EN8811H 2.5G 网口 + 3×千兆）；
+* **烽火 HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-cu`)**：带 Wi-Fi 6 光猫（Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED 硬件加速）。
 
-Every release automatically compiles and packages **both devices** into separate flashable images!
+每次发布均**同时自动化编译并提供两款机型的固件包**！
 
 ---
 
-## 🌟 Key Features & Architectural Enhancements
+## 🌟 核心特性与架构优化
 
-### 1. FiberHome HG5585F MT7916 Wi-Fi 6 & NPU WED Offload Integration
-- **MT7916D DBDC Dual-Band Wireless**: Integrated `kmod-mt7915e` driver and `kmod-mt7916-firmware`, delivering 2.4G 2x2 + 5G 3x3 AX3000 Wi-Fi 6 concurrency.
-- **Airoha NPU / WED Hardware Offload**: Bundled `en7581_MT7916_npu_rv32.bin` and `en7581_MT7916_npu_data.bin`. The 8-core RISC-V NPU directly routes wireless RX DMA and WED TX frames for zero-CPU line-rate throughput.
-- **Automated Factory EEPROM Extraction**: Integrated `/etc/hotplug.d/firmware/10-mt7916-an-eeprom` and `/etc/init.d/mt7916-an-eeprom` (executed at `START=08` prior to driver probing). Extracts the 4KB calibration block from UBI `factory` offset `0x1000` and validates the `0x7916` magic bytes.
-- **Preinit Wireless MAC Calculation**: Embedded `/lib/preinit/07_an7581_bsp_wifi_mac` automatically reads the base MAC and assigns 2.4G (`base + 6`) and 5G (`base + 7`) hardware addresses.
-- **RF Power Tables**: Integrated `SingleSKU` and `mt7916-sku.dat` beamforming data.
+### 1. 烽火 HG5585F MT7916 Wi-Fi 6 与 NPU WED 硬件加速全栈移植
+- **MT7916D DBDC 双频无线**：集成 `kmod-mt7915e` 驱动与 `kmod-mt7916-firmware` 官方固件，支持 2.4G 2x2 + 5G 3x3 AX3000 Wi-Fi 6 并发。
+- **Airoha NPU / WED 硬件直转加速**：预置 `en7581_MT7916_npu_rv32.bin` 与 `en7581_MT7916_npu_data.bin`，由达发 8 核 RISC-V NPU 直接接管无线 RX DMA 与 WED TX 数据通路，实现无线与有线之间零 CPU 占用线速转发。
+- **工厂 EEPROM 校准自动提取**：内置 `/etc/hotplug.d/firmware/10-mt7916-an-eeprom` 与 `/etc/init.d/mt7916-an-eeprom`（在 `kmodloader` 加载驱动前于 `START=08` 执行），开机自动从 UBI `factory` 分区的 `0x1000` 偏移处提取 4KB 射频校准数据，校验 `0x7916` 硬件魔数并无缝提供给驱动。
+- **独立 MAC 地址算号机制**：内置 `/lib/preinit/07_an7581_bsp_wifi_mac`，开机预初始化阶段自动从 `factory` 分区读取基准 MAC 并计算 2.4G (`base + 6`) 与 5G (`base + 7`) 独立合法硬件地址。
+- **射频功率校准表**：预置 `SingleSKU` 与 `mt7916-sku.dat` / `mt7916-sku-bf.dat` 波束成形数据。
 
-### 2. Full-Stack Airoha AN7581 Native PON Drivers
-- Integrated `kmod-airoha-xpon`, `kmod-airoha-en7572` (BOSA), `kmod-phy-airoha-en8811h` (2.5G PHY), and `airoha-en7581-npu-firmware` (NPU hardware offload).
-- Integrated `airoha-pond`, `airoha-ponctl`, and `luci-app-pon`.
-- Supports GPON / XG-PON / XGS-PON **O5 operational state** registration and verification, with full configuration of Vendor ID (e.g., `FHTT`), Equipment ID (e.g., `HS8145X6 (PON ONT)`), PON SN, LOID, password, cloned MAC, and BOSA calibration volume preservation.
-- Live telemetry for Rx/Tx optical power, operating voltage, and SoC temperature.
+### 2. Airoha AN7581 原生 PON 光猫全栈驱动
+- 内置 `kmod-airoha-xpon`、`kmod-airoha-en7572` (BOSA)、`kmod-phy-airoha-en8811h` (2.5G PHY)、`airoha-en7581-npu-firmware` (NPU 硬件加速)。
+- 内置 `airoha-pond`、`airoha-ponctl`、`luci-app-pon`。
+- 支持 GPON / XG-PON / XGS-PON **O5 正常营运状态**注册认证，支持 Vendor ID（如 `FHTT`）、Equipment ID（如 `HS8145X6 (PON ONT)`）、PON SN、LOID、Password、MAC 克隆及 BOSA 校准卷管理。
+- 实时光功率（接收/发射）、供电电压、芯片温度检测与全链路遥测告警。
 
-### 2. Kernel Netfilter NFQUEUE Integration (Native Sing-Box `auto-redirect`)
-- Compiled and integrated `kmod-nfnetlink-queue`, `kmod-nft-queue`, and `kmod-ipt-nfqueue`.
-- Completely solves the crash when enabling `auto_redirect: true` in Sing-Box / Momo on stock PonWrt:
+### 3. Airoha 8核 NPU / PPE 硬件流量卸载（Fastpath 线速直转）
+- 默认开启 Firewall4 硬件 PPE 流卸载（`flow_offloading='1'`, `flow_offloading_hw='1'`），经 Linux 6.18.60 实测通过长时间高通量与 PPPoE over VLAN 稳定性验证，由达发 8 核 NPU / PPE 引擎完成硬件线速直转，千兆拨号满速转发时 4 核 CPU 占用低至约 **4.5%**。
+- 移植 QWRT 内存防碎片参数（`vm.percpu_pagelist_high_fraction = 128`）：深度优化单核 page 列表阈值，彻底杜绝 4 核并发高吞吐下的物理内存碎片与分配延迟。
+- 局域网广播免连接跟踪（`NOTRACK`）：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
+- 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈，提升 4K 串流与并发吞吐。
+- 解锁 AN7581 4 核 1.2GHz 动态满频算力（空闲 500MHz 极度省电清凉，重载秒升 1.2GHz）。
+
+### 4. 内核级 Netfilter NFQUEUE 支持（原生支持 Sing-Box `auto-redirect`）
+- 编译并集成 `kmod-nfnetlink-queue`、`kmod-nft-queue` 及 `kmod-ipt-nfqueue` 内核模块。
+- 彻底解决 Sing-Box / Momo 在原版 PonWrt 上开启 `auto_redirect: true` 时因缺少内核 Netfilter 队列驱动而崩溃报错的问题：
   > `FATAL[0000] start nfqueue: could not unbind existing handlers: netlink receive: invalid argument (-EINVAL)`
-- Enables native transparent proxy redirection via Sing-Box TUN mode without requiring complex custom nftables scripting.
-- Optimized for Momo (`core_only='1'`), lifting the default 60MiB hard-coded memory restriction to `128MiB` with direct bypass routing for multicast `224.0.0.0/4` and `239.0.0.0/8`.
+- 实测支持 Sing-Box TUN 模式原生全自动流量重定向拦截（局域网透明网关），无需多余且脆弱的自定义 nftables 脚本。
+- 适配 Momo（`core_only='1'`），解除默认 `60MiB` 硬编码内存限制并放宽至 `128MiB`，预设 `224.0.0.0/4`、`239.0.0.0/8` 组播流量直连绕行。
 
-### 3. Hardware Crypto Coprocessor Acceleration (Inside Secure SafeXcel EIP-93)
-- Resolves the performance bottleneck and thermal throttling caused by the lack of ARMv8 AES CPU extensions on the physical AN7581 cores.
-- Driver-level activation of the on-chip **Inside Secure SafeXcel EIP-93 dedicated hardware cryptographic engine (`kmod-crypto-hw-eip93`)** at base address `0x1fb70000`.
-- Integrated `kmod-cryptodev` to expose `/dev/crypto` to user-space.
-- Fully wired into the OpenSSL engine subsystem (`libopenssl-devcrypto`) via `/etc/ssl/modules.cnf.d/devcrypto.cnf`, offloading AES (ECB/CBC/CTR), DES/3DES, and SHA/HMAC calculations directly to the hardware engine for wire-speed crypto and low CPU load.
+### 5. Airoha AN7581 硬件密码协处理器硬件加速 (Inside Secure SafeXcel EIP-93)
+- 驱动级激活片上基地址 `0x1fb70000` 的 **Inside Secure SafeXcel EIP-93 独立硬件密码协处理器 (`kmod-crypto-hw-eip93`)**。
+- 内置 `kmod-cryptodev` 向用户空间暴露 `/dev/crypto` 硬件设备。
+- 深度集成 OpenSSL 硬件加速引擎插件 (`libopenssl-devcrypto`) 与 `/etc/ssl/modules.cnf.d/devcrypto.cnf`，将 AES (ECB/CBC/CTR)、DES/3DES 及 SHA/HMAC 等加解密计算全量卸载至硬件协处理器执行，实现高吞吐、低延迟、超低 CPU 负载。
 
-### 4. Dual-Stack 4K Telecom IPTV Engine
-- **PON Layer**: Built-in `luci-app-iptv` for binding IPTV service VLAN and multicast VLANs on dial-up or bridge mode.
-- **Application Layer**: Integrated `msd_lite` (listening on port `4022`, configured with 8MB circular cache + 4 threads) and `udpxy` (backup), coupled with 8MB UDP socket kernel buffer optimization (`99-custom-net-optimization.conf`).
-- **Dynamic Playlist**: Bundled with Guangdong Shenzhen Telecom categorized `/www/iptv.m3u`, automatically updated with the current LAN gateway IP via the `95-iptv-m3u-ip` hotplug hook.
+### 6. 电信 4K/8K IPTV 双栈引擎
+- **PON 层**：支持在光猫拨号/桥接时直接绑定电信 IPTV 业务 VLAN / 组播 VLAN。
+- **应用层**：内置 `msd_lite`（默认监听 `4022` 端口，配置 8MB 环形大缓存 + 4 线程），搭配 8MB UDP 内核缓冲调优（`99-custom-net-optimization.conf`），杜绝 4K/8K 组播丢包。
+- **智能播放列表**：内置广东深圳电信全分类 `/www/iptv.m3u`，并通过 `95-iptv-m3u-ip` 热插拔脚本自动随网关当前 LAN IP 动态替换播放列表中的 IP 地址。
 
-### 5. Dynamic Frequency Scaling & Thermal Control (`cpufreq`)
-- Integrated `kmod-cpufreq-dt` and `luci-app-cpufreq` using the `schedutil` governor.
-- Automatically scales the 4x Cortex-A53 cores down to 600MHz at idle and ramps up to 1.0GHz / 1.2GHz under load, preventing overheating.
+### 7. 动态域名解析 (Cloudflare DDNS) 与全功能 DNS 引擎
+- **Cloudflare DDNS**：内置 `ddns-scripts-cloudflare`，开箱即用支持双栈 IPv4 / IPv6 动态域名极速解析。
+- **全功能 DNS 解析引擎 (`dnsmasq-full`)**：原生支持 `ipset`、`nftset` 与 DNSSEC，为 Sing-Box、Momo 及各类透明分流提供坚实底层。
 
-### 6. Flow Offloading & Maintenance Utilities
-- Firewall4 software and hardware PPE flow offloading enabled by default (`flow_offloading='1'`, `flow_offloading_hw='1'`), verified stable over long-term high-throughput PPPoE-over-VLAN workloads on Linux 6.18.60, providing line-rate Fastpath packet processing via the Airoha 8-core NPU/PPE to significantly offload the 4-core Cortex-A53 CPU and reduce heat dissipation.
-- Native dynamic IPv6 interface `wan_6` binding added to Firewall zone `wan` for comprehensive state tracking.
-- QWRT per-CPU pagelist memory optimization (`vm.percpu_pagelist_high_fraction = 128`) preventing page allocation stalls and memory fragmentation under high-bandwidth multi-core concurrency.
-- QWRT SSDP (`239.255.255.250:1900`) and WSD (`3702`) `NOTRACK` bypass to avoid connection tracking table bloat and switch CDM queue backpressure.
-- 16MB high-throughput TCP socket buffer tuning (`rmem_max` / `wmem_max = 16M`) to eliminate bandwidth-delay product bottlenecks.
-- AN7581 1.2GHz dynamic cpufreq governor unlock and disabled unused Samba4/wsdd2 services saving ~50MB physical RAM out of the box.
-- Out-of-the-box support for `xupnpd` (DLNA IPTV streaming), `luci-app-arpbind` (static IP/MAC anti-drift binding), and `luci-app-autoreboot` (scheduled auto-restart).
-- Pre-configured shell alias `alias iperf3='iperf3 -A 3'` pinning speedtests to Core 3, avoiding network interrupt starvation on other cores.
+### 8. 烽火 (FiberHome) PON 认证参数一键备份与自动防刷除保护
+- 提供 `/usr/sbin/backup-fiberhome-pon.sh` 与 `/usr/sbin/restore-fiberhome-pon.sh` 脚本，一键提取并校验 `FHTT`、`HG5585FV1.0`、LOID、PON SN 及设备标识。
+- 自动维护 `/etc/sysupgrade.conf`，将烽火认证数据及备忘档案永久纳入保护清单，彻底告别固件升级后需要重填认证信息的痛点。
 
-### 7. Dynamic DNS (DDNS-Go)
-- Pre-installed `ddns-go` + `luci-app-ddns-go` + `luci-i18n-ddns-go-zh-cn` for IPv4 & IPv6 automated DNS record management.
-
-### 8. System Ergonomics & Aesthetics
-- **Vantage Console Theme & Dashboard** (pre-enabled by default; classical Argon theme also bundled).
-- ZRAM `zstd` compressed swap (256MB swap + daily 04:30 defragmentation).
-- `ttyd` terminal auto-login, `nlbwmon` bandwidth monitor, and `ramfree` memory reclamation.
+### 9. 界面与审美调优
+- **Vantage 控制台主题与网络监控看板**：修复纯有线与 Wi-Fi 混合模式下的端口拓扑流，呈现炫酷动态光流。
+- **精细温控与 NPU 仪表盘**：集成 `temperature-rpc.uc` 与 `autocore`，连通 `/sbin/tempinfo` RPC，实时显示 SoC 与光模块温度。
+- **网页终端 (`luci-app-ttyd`)**：随时随地免客户端一键进入 SSH 终端。
 
 ---
 
-## 📦 Firmware Downloads
+## 📦 固件下载 (Releases)
 
-Download release binaries from [GitHub Releases](https://github.com/wuziwei/ponwrt-ZN504/releases):
+请前往 [GitHub Releases](https://github.com/wuziwei/ponwrt-ZN504/releases) 获取经过实机严格验收的固件包：
 
-| Firmware Image | Use Case | Description |
+| 适用设备 | 固件文件名 | 适用场景 |
 | :--- | :--- | :--- |
-| `ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb` | **System Upgrade (Recommended)** | For upgrading existing OpenWrt/PonWrt systems. Preserves all PON identity parameters and broadband PPPoE credentials. |
-| `ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb` | **U-Boot Web Recovery** | For unbricking or initial installation from U-Boot Web recovery mode. |
-| `momo-bundle.tar.gz` | **Proxy Bundle (Optional)** | Statically compiled `sing-box` (Go ARM64) and `luci-app-momo` management interface. |
-
-### Checksums (SHA-256)
-
-```text
-57d082b69d94b22adbe1d8c9650262617d38a4978bc64c6a80dabb847fbb3f64  ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb
-908e92b6ed13cdf7c36465f8a5ec5a98aa6af9a68218fff5313f229669eda5af  ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb
-f90cd5bb3b03dc7274f72190b9fe07ad8afd0697d5cf124c70045cf64fb4f41a  momo-bundle.tar.gz
-```
+| **兆能 ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb` | **系统平滑升级（推荐）**，保留全部配置 |
+| **兆能 ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
+| **烽火 HG5585F (CT 电信版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-squashfs-sysupgrade.itb` | **系统平滑升级（推荐）**，含 MT7916 Wi-Fi |
+| **烽火 HG5585F (CT 电信版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
+| **烽火 HG5585F (CU 联通版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-cu-squashfs-sysupgrade.itb` | **系统平滑升级（推荐）**，含 MT7916 Wi-Fi |
+| **烽火 HG5585F (CU 联通版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-cu-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
 
 ---
 
-## 🛠️ Flashing & Upgrade Guide
+## 🛠️ 刷机与升级指南
 
 > [!IMPORTANT]
-> **FiberHome (FHTT) PON Credentials Safeguard**:
-> This device operates using cloned **FiberHome (FHTT / HG5585FV1.0)** credentials to authenticate with the ISP OLT, rather than bare factory defaults.
-> Never wipe the device with a clean flash without retaining configuration. Run `/usr/sbin/backup-fiberhome-pon.sh` before upgrading to ensure your cloned FiberHome PON parameters are securely backed up.
+> **关于光猫认证参数保护（特别提醒）**：
+> 接入运营商网络通常使用的是**克隆的原电信烽火（FiberHome / FHTT）光猫认证参数**（包含 `vendor_id='FHTT'`、`hardware_version='HG5585FV1.0'`、LOID 与 SN）。
+> 升级前**切勿清空配置恢复出厂**，应直接使用保留配置升级，或在终端执行 `/usr/sbin/backup-fiberhome-pon.sh` 生成认证备份！
 
-### Backup & Restore FiberHome PON Credentials
+### 方式一：SSH 命令行保留配置安全升级（强烈推荐）
 
-```bash
-# Backup credentials to /etc/fiberhome_pon_backup.uci and protect in sysupgrade.conf
-/usr/sbin/backup-fiberhome-pon.sh
-
-# Restore credentials if settings are ever reset
-/usr/sbin/restore-fiberhome-pon.sh
-```
-
-### Method 1: Non-Destructive SSH Upgrade (Recommended)
-
-To preserve all current configurations (SN, LOID, VLAN 41, PPPoE credentials):
+在已有系统的设备上升级，可完整保留光猫认证信息（SN、LOID、VLAN 41）与宽带账号密码：
 
 ```bash
-# 1. Upload sysupgrade image to /tmp on the optical modem
-scp -O ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb root@192.168.1.1:/tmp/sysupgrade.bin
+# 1. 将 sysupgrade 固件上传至光猫的 /tmp 目录
+scp -O <firmware-name>-squashfs-sysupgrade.itb root@192.168.1.1:/tmp/sysupgrade.bin
 
-# 2. Verify signature and image validity
+# 2. SSH 登录并校验固件完整性
 ssh root@192.168.1.1 "sysupgrade -T /tmp/sysupgrade.bin"
-# Expected response: "Signature check OK"
 
-# 3. Flash while preserving configuration (DO NOT use -n)
+# 3. 执行保留配置刷入（切勿使用 -n 参数，否则会清除所有参数）
 ssh root@192.168.1.1 "sysupgrade -v -c /tmp/sysupgrade.bin"
 ```
 
-The device will write the image and reboot in 1–2 minutes.
+等待设备自动刷写并重启（通常约 1~2 分钟），即可无缝恢复拨号并上线。
 
-### Method 2: LuCI Web Interface
+### 方式二：LuCI Web 升级
 
-1. Open LuCI Web UI (`http://192.168.1.1`);
-2. Navigate to **System -> Backup / Flash Firmware**;
-3. Choose `ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb`;
-4. Check **Keep settings** and proceed with the flash.
+1. 登录 LuCI 管理后台（默认 `http://192.168.1.1`）；
+2. 进入 **系统 (System) -> 备份/升级 (Backup / Flash Firmware)**；
+3. 选择对应的 `squashfs-sysupgrade.itb` 镜像；
+4. 勾选 **“保留配置 (Keep settings)”** 后点击上传并确认刷写。
 
-### Method 3: U-Boot Web Recovery Mode
+### 方式三：U-Boot Web 恢复刷机
 
-If the device fails to boot:
-1. Power off the device, press and hold the **Reset** button on the back panel, then power on;
-2. Hold Reset for 8–10 seconds until the indicator flashes, then release;
-3. Connect a LAN cable from your PC to the router, set PC IP to `192.168.1.2 / 255.255.255.0`;
-4. Open `http://192.168.1.1` in your browser to enter U-Boot Web interface;
-5. Upload `ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb` to recover.
+若因误操作导致系统无法启动：
+1. 断开电源，按住机身背部 **Reset 键** 并重新插电；
+2. 保持按住约 8~10 秒，待指示灯闪烁后松开；
+3. 电脑网线直连 LAN 口，设置电脑静态 IP 为 `192.168.1.2` / `255.255.255.0`；
+4. 浏览器访问 `http://192.168.1.1` 进入 U-Boot Web 界面；
+5. 上传对应的 `initramfs-recovery.itb` 镜像刷入恢复。
 
 ---
 
-## 📖 ZN504XG-D PON Provisioning & OLT Registration Guide (Field Lessons)
+## 📖 兆能 ZN504XG-D PON 上线与 OLT 注册通关指南 (含踩坑实录)
 
-Replacing stock carrier optical modems (e.g. Huawei HS8145X6, FiberHome HG5585F) with the **ZN504XG-D** (Airoha AN7581) to unlock 2.5G full-rate connectivity is a primary use case.
+将**兆能 ZN504XG-D**（达发 Airoha AN7581）替换电信原装光猫（如华为 HS8145X6、烽火 HG5585F 等）并直连光纤上线，是发挥这台光猫 2.5G 性能的核心场景。
 
-Many users encounter issues such as **cyclic O1–O5 state drops**, **instant OLT deactivations**, or **PPPoE PADI timeouts**. Below is the verified end-to-end registration procedure and hard-learned troubleshooting lessons.
+许多机友在换猫时常遇到**“状态在 O1~O5 反复跌落”、“光猫注册瞬时断开”、“PPPoE 无法获取报文”**等难题。以下整理自实机反复抓包与验证的完整通关配置与避坑血泪总结。
 
-### 1. Essential Parameters to Extract from Stock Modem
+### 1. 换猫前必须提取的“原光猫 4 要素”
 
-Before disconnecting your original optical modem, record the following credentials:
+在拔下原运营商光猫前，务必登录原光猫后台或拍照记录以下核心参数：
 
-| Parameter | Description | Example (Telecom) |
+| 参数项 | 说明 | 示例 (以电信原猫为例) |
 | :--- | :--- | :--- |
-| **PON SN** | 16-character PON Serial Number (first 4 characters are vendor ASCII, last 8 are hex) | `48575443XXXXXXXX` (`HWTC` Huawei) |
-| **Broadband LOID** | Logic ID for telecom authentication | Phone number or `SZ10000XXXXXX` (leave password blank if none) |
-| **Vendor & Model** | Vendor ID code and equipment hardware version | Vendor: `HWTC` or `FHTT`, Model: `HS8145X6` or `HG5585FV1.0` |
-| **Internet VLAN ID** | 802.1q VLAN Tag bound to Internet service | Often `41`, `43`, or `46` (multicast/IPTV typically `45`) |
-| **PPPoE Credentials** | Broadband dial-up username and password | `0755XXXXXXXX@163.gd` |
+| **PON SN (序列号)** | 原光猫机身背部标签或后台显示的 PON 序列号（前 4 位通常为厂商代码，后 8 位为十六进制） | `48575443XXXXXXXX` (`HWTC` 华为) 或 `FHTTXXXXXXXX` |
+| **宽带 LOID** | 电信逻辑 ID (逻辑识别码)，部分地区装维工单上称为“宽带识别码/逻辑认证码” | 手机号或 `SZ10000XXXXXX` (若有密码一并记录，无密码留空) |
+| **设备厂商与型号** | 原光猫设备型号代码与硬件版本号 | 厂商: `HWTC` 或 `FHTT`，型号: `HS8145X6` 或 `HG5585FV1.0` |
+| **上网 VLAN ID** | 原光猫网络配置中“Internet”业务绑定的 VLAN Tag（关键！） | 深圳电信常用 `41`，部分地区为 `43` 或 `46`，组播通常为 `45` |
+| **宽带账号与密码** | PPPoE 拨号账号与密码 | `0755XXXXXXXX@163.gd` |
 
 ---
 
-### 2. ZN504 Configuration Mapping
+### 2. ZN504 Web 界面与配置文件对照
 
-In LuCI (`http://192.168.1.1`), navigate to **Network -> PON Settings**:
+登录 ZN504 后台（默认 `http://192.168.1.1`），进入 **网络 (Network) -> PON 设置 (PON Configuration)**：
 
-#### ① Physical Link (Line 0)
-- **Device**: `pon0`
-- **Mode**: **`xgpon`** (standard for 10G PON Telecom connections; use `gpon` for Gigabit GPON, or `epon` for 10G-EPON)
-- **Serial Number**: 16-character hex SN from original modem (e.g. `48575443XXXXXXXX`)
+#### ① 基础线路配置 (Line 0)
+- **物理接口 (Device)**: `pon0`
+- **链路制式 (Mode)**: **`xgpon`**（绝大多数电信 10G 光纤为 XG-PON；若是千兆 GPON 则选 `gpon`，若是联通/移动 10G-EPON 则选 `epon`）
+- **PON 序列号 (Serial Number)**: 填入原光猫的完整 16 位 SN（如 `48575443XXXXXXXX`）
 
-#### ② OMCI Protocol Identification (Line 0 OMCI)
-- **Vendor ID**: **`FHTT`** (⚠️ See Lesson 1 below — recommended even if original modem was Huawei)
-- **Equipment ID**: **`HS8145X6 (PON ONT)`** (⚠️ See Lesson 2 below — parentheses are mandatory)
-- **Hardware Version**: `HG5585FV1.0`
-- **Software Version**: `RP0100`
-- **LOID**: Your broadband LOID (e.g. `SZXXXXXXXXX`)
-- **Operator ID**: `CTC` (China Telecom)
+#### ② OMCI 协议认证参数 (Line 0 OMCI)
+- **厂商代码 (Vendor ID)**: **`FHTT`**（⚠️ 见后文核心避坑 1，即使原猫是华为也强烈推荐填 `FHTT`）
+- **设备标识 (Equipment ID)**: **`HS8145X6 (PON ONT)`**（⚠️ 见后文核心避坑 2，必须带括号）
+- **硬件版本 (Hardware Version)**: `HG5585FV1.0`
+- **软件版本 (Software Version)**: `RP0100`
+- **宽带识别码 (LOID)**: 填入你的真实电信 LOID（如 `SZXXXXXXXXX`）
+- **运营商标识 (Operator ID)**: `CTC`（中国电信）
 
-#### Underlying Configuration (`/etc/config/pon`):
+#### 配置文件底层对应 (`/etc/config/pon`)：
 ```uci
 config xpon 'line0'
 	option device 'pon0'
@@ -205,42 +186,50 @@ config omci 'line0_omci'
 
 ---
 
-### 3. ⚠️ Critical Field Lessons & Common Pitfalls
+### 3. ⚠️ 核心避坑实录（高频翻车点详解）
 
-#### 🛑 Pitfall 1: Never report `HWTC` when upstream OLT is Huawei!
-* **Symptom**: The modem momentarily enters O5 state, but within **100 milliseconds** the upstream Huawei OLT issues a `Deactivate_ONU-ID` command (msg-id `0x05`), falling into an endless `O1 -> O2 -> O4 -> O5 -> O2` reconnect loop.
-* **Root Cause**: When an ONU reports `HWTC` (Huawei vendor code), Huawei OLTs enforce proprietary Huawei-only handshakes (bombarding OMCI ME Class 350 firmware image checks and Class 373 hardware fingerprinting). Because open-source PonWrt lacks Huawei proprietary closed-source response handlers, the OLT classifies the device as an illegitimate clone and terminates it.
-* **Solution**: Change `vendor_id` to **`FHTT` (FiberHome)**. Carrier OLTs are required to support third-party hardware. Reporting `FHTT` prompts the Huawei OLT to abandon proprietary checks and gracefully fall back to standard ITU-T G.988 / China Telecom CTC specifications, smoothly registering via LOID.
+#### 🛑 避坑一：局端 OLT 是华为时，千万不要把 Vendor ID 填成 `HWTC`！
+* **翻车现象**：许多机友认为“原猫是华为，我肯定要一模一样填 `HWTC`”。结果光猫能瞬时冲到 O5 状态，但在 **100 毫秒内就会被局端断开**（内核报 `Deactivate_ONU-ID`），在 `O1 -> O2 -> O4 -> O5 -> O2` 之间死循环跌落掉线。
+* **技术真相（抓包逆向）**：
+  局端华为 OLT 面对上报为“华为自家设备（`HWTC`）”的光猫时，会触发极其严苛的**华为闭源私有校验（连续下发 ME Class 350 分区指纹与 Class 373 硬件校验）**。开源 PonWrt 并不包含华为闭源系统的专有应答，华为 OLT 校验失败后立刻判定该设备为“非法假冒华为光猫”，随即发送指令强行断开。
+* **破局妙招（降维兼容）**：
+  运营商机房的华为 OLT 必须兼容全网第三方设备。将 `vendor_id` 填为 **`FHTT`（烽火）** 时，华为 OLT 会判定接入的是第三方设备，**自动关闭华为专属私有探测，退回到标准中国电信 CTC / ITU-T G.988 开放规范**，直接通过 LOID 顺利认证并下发数据通道！
 
-#### 🛑 Pitfall 2: Equipment ID must include `(PON ONT)` suffix
-* **Symptom**: Link enters O5, but the OLT refuses to provision GEM Ports / data channels.
-* **Solution**: The ITMS / OLT equipment database requires the full string: **`HS8145X6 (PON ONT)`** (including space and parentheses).
+#### 🛑 避坑二：设备标识 (Equipment ID) 必须带有完整后缀 `(PON ONT)`
+* **翻车现象**：只填 `HS8145X6` 或只填 `HG5585F`，光纤握手成功但机房始终不下发 GEM Port 业务通道。
+* **解决办法**：机房 ITMS / OLT 数据库中录入的设备全称格式是 **`HS8145X6 (PON ONT)`**（注意带空格和半角括号），完整填写后机房才会匹配对应的业务模板下发 VLAN。
 
-#### 🛑 Pitfall 3: PPPoE must bind to the VLAN interface (`pon0.41`)
-* **Symptom**: O5 state is stable, but WAN PPPoE discovery fails with continuous PADI timeouts.
-* **Root Cause**: Carrier broadband frames are encapsulated with 802.1q VLAN tags. Dialing directly on raw `pon0` discards or ignores these tags.
-* **Solution**: In **Network -> Interfaces**, bind WAN to **`pon0.41`** (or create an 802.1q device for your local VLAN).
+#### 🛑 避坑三：PPPoE 拨号必须绑定 VLAN 接口，切勿直接绑 `pon0`
+* **翻车现象**：光路已经顺利进入稳定 O5，但创建的 WAN 拨号永远发 PADI 超时无响应。
+* **技术真相**：电信光纤宽带在 OLT 端全部划分了业务 VLAN。上网业务不是运行在纯二层物理网卡 `pon0` 上的，而是承载在对应 VLAN 的虚拟子接口上。
+* **正确操作**：在 **网络 -> 接口** 中，将 WAN 的物理设备指定为 **`pon0.41`**（若当地上网 VLAN 是 41），或者在设备列表中创建名为 `pon0.41` 的 802.1q VLAN 接口再进行 PPPoE 拨号。
 
-#### 🛑 Pitfall 4: Carrier Session Lockout (`check user-name in black list`)
-* **Symptom**: PPPoE handshake succeeds, but authentication fails with:
-  > `Remote message: 28103012: check user-name in black list. failed!`
-* **Solution**: Disconnecting without logging out leaves an active session on the BRAS. Wait 3–5 minutes with the fiber disconnected to allow stale sessions to expire.
+#### 🛑 避坑四：原光猫会话锁定（BRAS 28103012 错误）
+* **翻车现象**：PPPoE 握手成功但鉴权失败，日志报错：
+  > `Remote message: 28103012: check user-name in black list. failed! / PAP authentication failed`
+* **技术真相**：原光猫未点击“断开连接”直接拔掉光纤，电信机房 BRAS 的在线会话（Session）未超时释放，认为该账号存在双拨行为触发风控拉黑。
+* **解决办法**：换猫前建议在老光猫后台点击“断开网络”；若已拔掉，只需静置拔光纤状态等待 3~5 分钟，让电信机房自动释放旧会话即可恢复拨号。
 
-#### 🛑 Pitfall 5: Configuration Loss Across System Upgrades
-* **Symptom**: Losing `/etc/config/pon` after a clean firmware flash leaves the device disconnected.
-* **Solution**: Run `/usr/sbin/backup-fiberhome-pon.sh` once. It archives your credentials to `/etc/fiberhome_pon_backup.uci` and adds them to `/etc/sysupgrade.conf`. Use `/usr/sbin/restore-fiberhome-pon.sh` for one-click restoration if ever needed.
+#### 🛑 避坑五：固件升级导致 `/etc/config/pon` 丢失变砖
+* **翻车现象**：好不容易调通上线，后续更新系统时一旦刷写清除了配置，开机直接失联。
+* **解决方案**：本项目固件已深度内置保护脚本，终端执行一次：
+  ```bash
+  /usr/sbin/backup-fiberhome-pon.sh
+  ```
+  该脚本会自动备份参数至 `/etc/fiberhome_pon_backup.uci` 并永久写入 `/etc/sysupgrade.conf` 白名单。升级后若遇异常，执行 `/usr/sbin/restore-fiberhome-pon.sh` 秒级回滚恢复。
 
 ---
 
-### 4. Verification & O5 Diagnostic Indicators
+### 4. 链路诊断与成功标志（如何确认已完美 O5）
 
-Run the following command to verify registration status:
+在终端执行以下指令可快速验证光纤注册全貌：
 
 ```bash
+# 查看 PON 守护进程状态
 pondctl status --line line0
 ```
 
-**✅ Expected Output for Healthy Registration**:
+**✅ 完美成功输出标志**：
 ```json
 {
   "channel_available": true,
@@ -252,17 +241,19 @@ pondctl status --line line0
   "vlan_ids": [1, 41, 45]
 }
 ```
-* `authentication_meaning`: `"accepted"` confirms valid credential verification.
-* `backend_state`: `"applied"` confirms provisioned GEM Port and T-CONT data paths.
-* `vlan_ids`: Includes your local Internet (`41`) and IPTV (`45`) tags.
+* `authentication_meaning`: 显示 **`"accepted"`** 表示认证通过；
+* `backend_state`: 显示 **`"applied"`** 表示电信机房已成功下发通道；
+* `vlan_ids`: 列表中包含 **`41`**（上网）和 **`45`**（IPTV）等 VLAN，说明光猫已具备完整通网能力！
 
 ---
 
----
+## 🚀 Sing-Box 原生 `auto-redirect` 配置示例
 
-## 🚀 Sing-Box Native `auto-redirect` Configuration
+固件内置的 `nfnetlink_queue` 驱动可直接支持 Sing-Box 的原生透明重定向。
 
-With `nfnetlink_queue` compiled in, Sing-Box handles redirection natively:
+### Inbound 配置规范：
+
+依照 [Sing-Box 官方规范](https://deepwiki.com/SagerNet/sing-box)，`auto_redirect` 必须配合 `auto_route: true` 运行：
 
 ```json
 {
@@ -282,74 +273,68 @@ With `nfnetlink_queue` compiled in, Sing-Box handles redirection natively:
 }
 ```
 
-When started:
+启动后执行 `sing-box run`，即可看到：
 ```text
 INFO[0000] inbound/tun[tun-in]: started at tun0
 INFO[0001] inbound/tun[tun-in]: inbound redirect connection from 192.168.1.xxx:xxxxx
 ```
+流量无需额外配置复杂的 nftables 规则即可全自动完成分流与代理！
 
 ---
 
-## 🏗️ Build from Source
+## 🏗️ 自行编译指南
 
+### 1. 准备环境
+推荐在 Ubuntu 22.04 / 24.04 LTS 环境下进行：
 ```bash
-# 1. Setup build dependencies
 sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+```
 
-# 2. Clone repository & install feeds
+### 2. 克隆代码与更新 Feeds
+```bash
 git clone https://github.com/wuziwei/ponwrt-ZN504.git
 cd ponwrt-ZN504
+
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+```
 
-# 3. Configure for AN7581 with NFQUEUE modules
-cp configs/an7581.config .config
-echo "CONFIG_PACKAGE_kmod-nfnetlink-queue=y" >> .config
-echo "CONFIG_PACKAGE_kmod-nft-queue=y" >> .config
-echo "CONFIG_PACKAGE_kmod-ipt-nfqueue=y" >> .config
+### 3. 应用 AN7581 增强配置
+```bash
+./scripts/kconfig.pl + configs/an7581.config configs/release.config > .config
 make defconfig
+```
 
-# 4. Compile
+### 4. 开始多线程编译
+```bash
 make download -j$(nproc)
 make -j$(nproc) || make -j1 || make -j1 V=s
 ```
 
-Outputs are located in `bin/targets/airoha/an7581/`.
+固件输出目录：`bin/targets/airoha/an7581/`
 
 ---
 
-## ⚠️ Disclaimer
+## ⚠️ 免责声明
 
-1. This project is for personal learning, testing, and research only.
-2. Flashing third-party firmware bears inherent risks. Always back up your calibration and configuration data.
-3. Users are responsible for complying with local regulations and carrier policies.
+1. 本项目为开源固件项目，旨在用于技术交流与网络设备功能研究。
+2. 刷写第三方固件具有一定风险，操作前请务必使用 `backup-fiberhome-pon.sh` 备份好克隆的烽火 PON 认证数据（LOID、SN、Vendor ID）与宽带认证信息。
+3. 请严格遵守当地电信运营商的相关管理规定，严禁用于任何非法网络活动。
 
 ---
 
-## 🙏 Acknowledgments & Credits
+## 🙏 致谢与引用项目 (Acknowledgments & References)
 
-This project builds upon the tremendous contributions of the open-source router and networking community. Special thanks and sincere appreciation to the following developers and projects:
+本项目凝聚了开源社区众多前驱开发者与项目的智慧结晶，特此对以下项目及贡献者表达诚挚感谢与崇高敬意：
 
-### 1. Base System & Core Firmware Architecture
-- **[OpenWrt Project](https://github.com/openwrt/openwrt)**: The foundational extensible Linux operating system for embedded devices.
-- **[ImmortalWrt](https://github.com/immortalwrt/immortalwrt)**: The highly optimized, feature-rich OpenWrt distribution and ecosystem.
-- **[pbs05/ponwrt](https://github.com/pbs05/ponwrt)**: The pioneering open-source PonWrt firmware base and drivers for Airoha AN7581/AN7583 10G PON ONTs.
-- **[coolsnowwolf (Lean)](https://github.com/coolsnowwolf/lede)**: For immense contributions to the OpenWrt ecosystem and foundational components like `autocore`.
-
-### 2. Hardware Acceleration & Engineering Benchmarks
-- **QWRT Firmware Developers**: For pioneering the Inside Secure SafeXcel EIP-93 dedicated hardware cryptographic engine (`kmod-crypto-hw-eip93`), Airoha PPE flow acceleration, and hardware performance tuning.
-- **[Kahen/PonWrt-CI-UBI](https://github.com/Kahen/PonWrt-CI-UBI)**: For the SoC thermal telemetry solution (`temperature-rpc.uc` LuCI RPC integration), MTD read-write partition protection (`kmod-mtd-rw`), and robust CI build engineering.
-- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**: For XG-PON PPPoE line-rate flow offloading (ultra-low 4.5% CPU usage at 1Gbps), 8MB high-throughput socket buffers, and network optimization.
-- **[bingoguo93](https://github.com/bingoguo93)**: For OpenWRT-CI-XG-040G-MD experience and package manifest benchmarks.
-
-### 3. Core Networking, Transparent Proxy & Applications
-- **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**: The universal, high-performance proxy platform.
-- **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**: The clean, streamlined LuCI transparent proxy management suite for sing-box.
-- **[sirpdboy/luci-app-lucky](https://github.com/sirpdboy/luci-app-lucky)** & **[lucky (gdy666)](https://github.com/gdy666/lucky)**: All-in-one port forwarding, DDNS, STUN NAT1, and reverse proxy engine.
-- **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**: Web dashboard monitoring AN7581 8-core RISC-V NPU and hardware PPE flow tables.
-- **[VIKINGYFY/packages](https://github.com/VIKINGYFY/packages)**: For Gecoos AC controller (`luci-app-gecoosac`) and Wake-on-LAN Ultra (`luci-app-wolultra`).
-- **[rozhuk-im/msd_lite](https://github.com/rozhuk-im/msd_lite)**: High-performance, lightweight multicast-to-HTTP proxy for 4K/8K IPTV streaming.
-
-### 4. UI Themes & User Experience
-- **[VizzleTF/luci-theme-footstrap](https://github.com/VizzleTF/luci-theme-footstrap)**: Clean and modern responsive theme adapted for PonWrt.
-- **[jerrykuku/luci-theme-argon](https://github.com/jerrykuku/luci-theme-argon)**: The classic, elegant Argon theme.
+- **[OpenWrt Project](https://github.com/openwrt/openwrt)**：为全球网络设备提供坚实、可扩展的嵌入式 Linux 操作系统底座。
+- **[ImmortalWrt](https://github.com/immortalwrt/immortalwrt)**：提供高度优化、特性丰富的中国本地化 OpenWrt 构建环境。
+- **[pbs05/ponwrt](https://github.com/pbs05/ponwrt)**：达发 Airoha AN7581 / AN7583 PON 光猫开源架构与驱动的奠基之作，本项目核心源码基底。
+- **QWRT 固件团队 / 开发者**：为达发芯片探索出 SafeXcel EIP-93 硬件密码协处理器驱动、PPE 硬件流表加速与 Wi-Fi WED 硬件直转的优秀实践范例。
+- **[Kahen/PonWrt-CI-UBI](https://github.com/Kahen/PonWrt-CI-UBI)**：提供 AN7581 SoC 精确温度遥测方案 (`temperature-rpc.uc` 与 LuCI RPC 联动)、MTD 读写保护 (`kmod-mtd-rw`)、自动化 CI 构建经验。
+- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**：提供 XG-PON 线路与 PPPoE 线速流量硬件卸载（4.5% 超低 CPU 占用）实践。
+- **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**：新一代高性能网络代理核心。
+- **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**：极简高效的 OpenWrt sing-box 透明网关前端与控制面板。
+- **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**：达发 AN7581 独立 8 核 RISC-V NPU / PPE 运行状态与硬件流表监控看板。
+- **[rozhuk-im/msd_lite](https://github.com/rozhuk-im/msd_lite)**：超轻量、高通量 4K/8K IPTV 组播转单播 HTTP 代理服务器。
+- **[VizzleTF/luci-theme-footstrap](https://github.com/VizzleTF/luci-theme-footstrap)**：专为 PonWrt 适配的清爽现代响应式主题。
