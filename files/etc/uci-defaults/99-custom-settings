@@ -298,4 +298,10 @@ net.ipv4.tcp_wmem=4096 65536 16777216
 EOF
 sysctl -p /etc/sysctl.d/30-network-buffers.conf 2>/dev/null || true
 
+# 约束多核 CPU 本地空闲页缓存上限至 1/128，防止内存碎片与多核内存饥饿
+cat <<'EOF' > /etc/sysctl.d/20-airoha-memory.conf
+vm.percpu_pagelist_high_fraction=128
+EOF
+sysctl -p /etc/sysctl.d/20-airoha-memory.conf 2>/dev/null || true
+
 exit 0
