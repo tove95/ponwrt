@@ -68,7 +68,7 @@
   - 预置 128MiB 健康堆内存上限与定时内存碎片整理，彻底杜绝 OOM 爆内存崩溃。
 
 ### 7. 流卸载策略 (Flow Offloading) 与局域网维护增强
-- 默认开启 Firewall4 软件流卸载（`flow_offloading='1'`），默认关闭硬件 PPE 流卸载（`flow_offloading_hw='0'`），彻底规避 Airoha/MTK PPE 硬件引擎在 PPPoE over VLAN 与 IPv6 入站直通（飞牛 NAS、OpenList、Emby、STRM 串流）时的死锁与丢包 Bug，4 核 Cortex-A53 软转发跑满千兆 CPU 占用率 < 15%。
+- 默认开启 Firewall4 软件与硬件 PPE 流卸载（`flow_offloading='1'`, `flow_offloading_hw='1'`），经 Linux 6.18.60 实测通过长时间高通量与 PPPoE over VLAN 稳定性验证，支持由达发 8 核 NPU / PPE 引擎完成硬件 Fastpath 线速直转，有效释放 4 核 Cortex-A53 CPU 负载并降低芯片发热。
 - 防火墙 `wan` 区域原生绑定 `wan_6` 动态 IPv6 接口，确保外网连接跟踪与状态机 100% 同步。
 - 开箱内置 `xupnpd`（DLNA IPTV 直播推流）、`luci-app-arpbind`（IP/MAC 静态防漂移绑定）、`luci-app-autoreboot`（计划定时健康自愈重启）。
 - 环境变量注入 `alias iperf3='iperf3 -A 3'`，强制独占 4 核中的 Core 3 测速，彻底避开网卡与系统软中断。

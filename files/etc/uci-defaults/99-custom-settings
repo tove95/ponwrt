@@ -7,10 +7,10 @@ set network.@device[0].igmp_snooping='0'
 commit network
 EOF
 
-# 1.1 开启 Firewall4 软件流控，禁用硬件 PPE 避免 PPPoE/VLAN 及 IPv6 入站丢包，补全 wan_6 动态接口
+# 1.1 开启 Firewall4 软件与硬件 PPE 流卸载（经 Linux 6.18.60 实测稳定），补全 wan_6 动态接口
 uci -q batch <<EOF
 set firewall.@defaults[0].flow_offloading='1'
-set firewall.@defaults[0].flow_offloading_hw='0'
+set firewall.@defaults[0].flow_offloading_hw='1'
 add_list firewall.@zone[1].network='wan_6'
 commit firewall
 EOF
@@ -93,7 +93,7 @@ if [ -f /etc/config/udpxy ]; then
     uci -q commit udpxy
 fi
 
-# 2.1 预置 Cloudflare IPv6 DDNS (router.444556.xyz 与 zn504.444556.xyz)
+# 2.1 预置 Cloudflare IPv6 DDNS (router.444556.xyz 与 zn504.444556.xyz，绑定 network.lan 自动规避 ULA 私网 IPv6)
 if [ -f /etc/config/ddns ]; then
     uci -q batch <<EOF
 set ddns.cf_zn504_ipv6=service
@@ -102,8 +102,8 @@ set ddns.cf_zn504_ipv6.service_name='cloudflare.com-v4'
 set ddns.cf_zn504_ipv6.domain='zn504@444556.xyz'
 set ddns.cf_zn504_ipv6.username='Bearer'
 set ddns.cf_zn504_ipv6.password='YOUR_CLOUDFLARE_API_TOKEN'
-set ddns.cf_zn504_ipv6.ip_source='interface'
-set ddns.cf_zn504_ipv6.ip_interface='br-lan'
+set ddns.cf_zn504_ipv6.ip_source='network'
+set ddns.cf_zn504_ipv6.ip_network='lan'
 set ddns.cf_zn504_ipv6.interface='br-lan'
 set ddns.cf_zn504_ipv6.use_ipv6='1'
 set ddns.cf_zn504_ipv6.lookup_host='zn504.444556.xyz'
@@ -120,8 +120,8 @@ set ddns.cf_router_ipv6.service_name='cloudflare.com-v4'
 set ddns.cf_router_ipv6.domain='router@444556.xyz'
 set ddns.cf_router_ipv6.username='Bearer'
 set ddns.cf_router_ipv6.password='YOUR_CLOUDFLARE_API_TOKEN'
-set ddns.cf_router_ipv6.ip_source='interface'
-set ddns.cf_router_ipv6.ip_interface='br-lan'
+set ddns.cf_router_ipv6.ip_source='network'
+set ddns.cf_router_ipv6.ip_network='lan'
 set ddns.cf_router_ipv6.interface='br-lan'
 set ddns.cf_router_ipv6.use_ipv6='1'
 set ddns.cf_router_ipv6.lookup_host='router.444556.xyz'
@@ -158,6 +158,9 @@ add_list momo.proxy.reserved_ip='224.0.0.0/4'
 add_list momo.proxy.reserved_ip='239.0.0.0/8'
 commit momo
 EOF
+fi
+if [ -f /etc/init.d/momo ]; then
+    /etc/init.d/momo enable 2>/dev/null || true
 fi
 mkdir -p /etc/momo/profiles
 
@@ -217,10 +220,10 @@ echo 'hsts=0' > /root/.wgetrc
 sed -i '/log-facility/d' /etc/dnsmasq.conf 2>/dev/null
 echo "log-facility=/dev/null" >> /etc/dnsmasq.conf
 
-# 9. 烽火 (FiberHome) PON 认证参数自动保护机制
-# 将烽火认证关键路径加入 /etc/sysupgrade.conf，防止固件升级抹除认证数据
+# 9. 烽火 (FiberHome) PON 认证与 Momo 自启配置跨版本升级自动保护机制
+# 将关键路径加入 /etc/sysupgrade.conf，防止固件升级抹除认证数据与开机自启
 SYSUPGRADE_CONF="/etc/sysupgrade.conf"
-for path in "/etc/config/pon" "/etc/fiberhome_pon_backup.uci" "/etc/fiberhome_pon_info.txt" "/usr/sbin/backup-fiberhome-pon.sh" "/usr/sbin/restore-fiberhome-pon.sh"; do
+for path in "/etc/config/pon" "/etc/fiberhome_pon_backup.uci" "/etc/fiberhome_pon_info.txt" "/usr/sbin/backup-fiberhome-pon.sh" "/usr/sbin/restore-fiberhome-pon.sh" "/etc/rc.d/S99momo" "/etc/rc.d/K10momo"; do
     if ! grep -q "^$path" "$SYSUPGRADE_CONF" 2>/dev/null; then
         echo "$path" >> "$SYSUPGRADE_CONF"
     fi

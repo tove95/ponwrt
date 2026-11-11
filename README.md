@@ -44,7 +44,7 @@ Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (b
 - Automatically scales the 4x Cortex-A53 cores down to 600MHz at idle and ramps up to 1.0GHz / 1.2GHz under load, preventing overheating.
 
 ### 6. Flow Offloading & Maintenance Utilities
-- Firewall4 software flow offloading enabled (`flow_offloading='1'`, `flow_offloading_hw='0'`), intentionally keeping hardware PPE offload disabled to prevent MTK/Airoha PPE packet-drop and connection freeze bugs on PPPoE-in-VLAN and inbound IPv6 direct routing (Feiniu NAS, OpenList, Emby, STRM streaming), while 4-core Cortex-A53 easily saturates gigabit throughput with < 15% CPU load.
+- Firewall4 software and hardware PPE flow offloading enabled by default (`flow_offloading='1'`, `flow_offloading_hw='1'`), verified stable over long-term high-throughput PPPoE-over-VLAN workloads on Linux 6.18.60, providing line-rate Fastpath packet processing via the Airoha 8-core NPU/PPE to significantly offload the 4-core Cortex-A53 CPU and reduce heat dissipation.
 - Native dynamic IPv6 interface `wan_6` binding added to Firewall zone `wan` for comprehensive state tracking.
 - Out-of-the-box support for `xupnpd` (DLNA IPTV streaming), `luci-app-arpbind` (static IP/MAC anti-drift binding), and `luci-app-autoreboot` (scheduled auto-restart).
 - Pre-configured shell alias `alias iperf3='iperf3 -A 3'` pinning speedtests to Core 3, avoiding network interrupt starvation on other cores.
