@@ -11,7 +11,7 @@
 
 Customized and performance-enhanced [PonWrt](https://github.com/pbs05/ponwrt) (based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) / Linux `6.18`) firmware engineered for dual flagship Airoha AN7581 optical gateways:
 * **ZN504XG-D (`znxt_zn504xg-d`)**: Pure wired 2.5G high-performance ONT (EN8811H 2.5G port + 3×GbE)
-* **FiberHome HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-cu`)**: Wi-Fi 6 ONT (Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED hardware acceleration)
+* **FiberHome HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-ct-usb-sfp`)**: Wi-Fi 6 ONT (Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED hardware acceleration, includes Telecom USB 2.0 variant)
 
 Every release automatically compiles and packages **both devices** into separate flashable images!
 
@@ -91,10 +91,10 @@ Download production-tested images from [GitHub Releases](https://github.com/wuzi
 | :--- | :--- | :--- |
 | **ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb` | **Standard Sysupgrade (Recommended)**, preserves settings |
 | **ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
-| **HG5585F (CT Telecom)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-squashfs-sysupgrade.itb` | **Standard Sysupgrade (Recommended)**, includes MT7916 Wi-Fi |
-| **HG5585F (CT Telecom)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
-| **HG5585F (CU Unicom)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-cu-squashfs-sysupgrade.itb` | **Standard Sysupgrade (Recommended)**, includes MT7916 Wi-Fi |
-| **HG5585F (CU Unicom)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-cu-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
+| **HG5585F (CT Telecom USB 2.0)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-usb-sfp-squashfs-sysupgrade.itb` | **Telecom USB 2.0 Sysupgrade (Recommended)**, includes MT7916 Wi-Fi |
+| **HG5585F (CT Telecom USB 2.0)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-usb-sfp-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
+| **HG5585F (CT Telecom Standard)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-squashfs-sysupgrade.itb` | **Telecom Standard Sysupgrade**, includes MT7916 Wi-Fi |
+| **HG5585F (CT Telecom Standard)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-initramfs-recovery.itb` | **U-Boot Web Recovery / Unbrick** |
 
 ---
 

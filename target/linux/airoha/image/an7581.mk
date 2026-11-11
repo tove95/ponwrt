@@ -210,9 +210,19 @@ define Device/fiberhome_hg5585f-ct
 endef
 TARGET_DEVICES += fiberhome_hg5585f-ct
 
-# Disabled to streamline builds: only release ZN504XG-D and HG5585F CT standard
+define Device/fiberhome_hg5585f-ct-usb-sfp
+  $(call Device/fiberhome_hg5585f-common)
+  DEVICE_MODEL := HG5585F
+  DEVICE_VARIANT := CT-USB2.0
+  DEVICE_DTS := an7581-fiberhome-hg5585f-ct-usb-sfp
+  DEVICE_PACKAGES += kmod-phy-maxlinear
+  SUPPORTED_DEVICES += fiberhome,hg5585f-ct
+  $(call Device/fiberhome_hg5585f-images)
+endef
+TARGET_DEVICES += fiberhome_hg5585f-ct-usb-sfp
+
+# Disabled to streamline builds: CU (Unicom) models excluded as requested
 # TARGET_DEVICES += fiberhome_hg5585f-cu
-# TARGET_DEVICES += fiberhome_hg5585f-ct-usb-sfp
 # TARGET_DEVICES += fiberhome_hg5585f-cu-usb-sfp
 
 # Both models share the UBI boot chain and store device data in factory.

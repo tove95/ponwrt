@@ -11,7 +11,7 @@
 
 本项目基于上游 [PonWrt](https://github.com/pbs05/ponwrt)（ImmortalWrt / Linux `6.18`），针对采用 **达发 Airoha AN7581 (4核 Cortex-A53 @ 1.2GHz + 8核 RISC-V NPU)** 主控的双旗舰机型进行深度工程化定制、硬件驱动加速与内核网络栈增强：
 * **兆能 ZN504XG-D (`znxt_zn504xg-d`)**：纯有线 2.5G 高性能光猫（EN8811H 2.5G 网口 + 3×千兆）；
-* **烽火 HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-cu`)**：带 Wi-Fi 6 光猫（Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED 硬件加速）。
+* **烽火 HG5585F (`fiberhome_hg5585f-ct` / `fiberhome_hg5585f-ct-usb-sfp`)**：带 Wi-Fi 6 光猫（Airoha AN7581 + MT7916D DBDC AX3000 + NPU WED 硬件加速，含电信 USB 2.0 专用版本）。
 
 每次发布均**同时自动化编译并提供两款机型的固件包**！
 
@@ -91,10 +91,10 @@
 | :--- | :--- | :--- |
 | **兆能 ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-squashfs-sysupgrade.itb` | **系统平滑升级（推荐）**，保留全部配置 |
 | **兆能 ZN504XG-D** | `ponwrt-airoha-an7581-znxt_zn504xg-d-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
-| **烽火 HG5585F (CT 电信版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-squashfs-sysupgrade.itb` | **系统平滑升级（推荐）**，含 MT7916 Wi-Fi |
-| **烽火 HG5585F (CT 电信版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
-| **烽火 HG5585F (CU 联通版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-cu-squashfs-sysupgrade.itb` | **系统平滑升级（推荐）**，含 MT7916 Wi-Fi |
-| **烽火 HG5585F (CU 联通版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-cu-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
+| **烽火 HG5585F (CT 电信 USB 2.0 版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-usb-sfp-squashfs-sysupgrade.itb` | **电信 USB 2.0 版系统升级（推荐）**，含 MT7916 Wi-Fi |
+| **烽火 HG5585F (CT 电信 USB 2.0 版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-usb-sfp-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
+| **烽火 HG5585F (CT 电信标准版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-squashfs-sysupgrade.itb` | **电信标准版系统升级**，含 MT7916 Wi-Fi |
+| **烽火 HG5585F (CT 电信标准版)** | `ponwrt-airoha-an7581-fiberhome_hg5585f-ct-initramfs-recovery.itb` | **U-Boot Web 恢复/救砖** |
 
 ---
 
