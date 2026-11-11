@@ -136,6 +136,119 @@ If the device fails to boot:
 
 ---
 
+## 📖 ZN504XG-D PON Provisioning & OLT Registration Guide (Field Lessons)
+
+Replacing stock carrier optical modems (e.g. Huawei HS8145X6, FiberHome HG5585F) with the **ZN504XG-D** (Airoha AN7581) to unlock 2.5G full-rate connectivity is a primary use case.
+
+Many users encounter issues such as **cyclic O1–O5 state drops**, **instant OLT deactivations**, or **PPPoE PADI timeouts**. Below is the verified end-to-end registration procedure and hard-learned troubleshooting lessons.
+
+### 1. Essential Parameters to Extract from Stock Modem
+
+Before disconnecting your original optical modem, record the following credentials:
+
+| Parameter | Description | Example (Telecom) |
+| :--- | :--- | :--- |
+| **PON SN** | 16-character PON Serial Number (first 4 characters are vendor ASCII, last 8 are hex) | `48575443XXXXXXXX` (`HWTC` Huawei) |
+| **Broadband LOID** | Logic ID for telecom authentication | Phone number or `SZ10000XXXXXX` (leave password blank if none) |
+| **Vendor & Model** | Vendor ID code and equipment hardware version | Vendor: `HWTC` or `FHTT`, Model: `HS8145X6` or `HG5585FV1.0` |
+| **Internet VLAN ID** | 802.1q VLAN Tag bound to Internet service | Often `41`, `43`, or `46` (multicast/IPTV typically `45`) |
+| **PPPoE Credentials** | Broadband dial-up username and password | `0755XXXXXXXX@163.gd` |
+
+---
+
+### 2. ZN504 Configuration Mapping
+
+In LuCI (`http://192.168.1.1`), navigate to **Network -> PON Settings**:
+
+#### ① Physical Link (Line 0)
+- **Device**: `pon0`
+- **Mode**: **`xgpon`** (standard for 10G PON Telecom connections; use `gpon` for Gigabit GPON, or `epon` for 10G-EPON)
+- **Serial Number**: 16-character hex SN from original modem (e.g. `48575443XXXXXXXX`)
+
+#### ② OMCI Protocol Identification (Line 0 OMCI)
+- **Vendor ID**: **`FHTT`** (⚠️ See Lesson 1 below — recommended even if original modem was Huawei)
+- **Equipment ID**: **`HS8145X6 (PON ONT)`** (⚠️ See Lesson 2 below — parentheses are mandatory)
+- **Hardware Version**: `HG5585FV1.0`
+- **Software Version**: `RP0100`
+- **LOID**: Your broadband LOID (e.g. `SZXXXXXXXXX`)
+- **Operator ID**: `CTC` (China Telecom)
+
+#### Underlying Configuration (`/etc/config/pon`):
+```uci
+config xpon 'line0'
+	option device 'pon0'
+	option serial_number '48575443XXXXXXXX'
+	option mode 'xgpon'
+
+config omci 'line0_omci'
+	option line 'line0'
+	option device 'omci0'
+	option omcc_version '0x86'
+	option vendor_id 'FHTT'
+	option equipment_id 'HS8145X6 (PON ONT)'
+	option hardware_version 'HG5585FV1.0'
+	option software_version 'RP0100'
+	option loid 'SZXXXXXXXXXXXXX'
+	option operator_id 'CTC'
+```
+
+---
+
+### 3. ⚠️ Critical Field Lessons & Common Pitfalls
+
+#### 🛑 Pitfall 1: Never report `HWTC` when upstream OLT is Huawei!
+* **Symptom**: The modem momentarily enters O5 state, but within **100 milliseconds** the upstream Huawei OLT issues a `Deactivate_ONU-ID` command (msg-id `0x05`), falling into an endless `O1 -> O2 -> O4 -> O5 -> O2` reconnect loop.
+* **Root Cause**: When an ONU reports `HWTC` (Huawei vendor code), Huawei OLTs enforce proprietary Huawei-only handshakes (bombarding OMCI ME Class 350 firmware image checks and Class 373 hardware fingerprinting). Because open-source PonWrt lacks Huawei proprietary closed-source response handlers, the OLT classifies the device as an illegitimate clone and terminates it.
+* **Solution**: Change `vendor_id` to **`FHTT` (FiberHome)**. Carrier OLTs are required to support third-party hardware. Reporting `FHTT` prompts the Huawei OLT to abandon proprietary checks and gracefully fall back to standard ITU-T G.988 / China Telecom CTC specifications, smoothly registering via LOID.
+
+#### 🛑 Pitfall 2: Equipment ID must include `(PON ONT)` suffix
+* **Symptom**: Link enters O5, but the OLT refuses to provision GEM Ports / data channels.
+* **Solution**: The ITMS / OLT equipment database requires the full string: **`HS8145X6 (PON ONT)`** (including space and parentheses).
+
+#### 🛑 Pitfall 3: PPPoE must bind to the VLAN interface (`pon0.41`)
+* **Symptom**: O5 state is stable, but WAN PPPoE discovery fails with continuous PADI timeouts.
+* **Root Cause**: Carrier broadband frames are encapsulated with 802.1q VLAN tags. Dialing directly on raw `pon0` discards or ignores these tags.
+* **Solution**: In **Network -> Interfaces**, bind WAN to **`pon0.41`** (or create an 802.1q device for your local VLAN).
+
+#### 🛑 Pitfall 4: Carrier Session Lockout (`check user-name in black list`)
+* **Symptom**: PPPoE handshake succeeds, but authentication fails with:
+  > `Remote message: 28103012: check user-name in black list. failed!`
+* **Solution**: Disconnecting without logging out leaves an active session on the BRAS. Wait 3–5 minutes with the fiber disconnected to allow stale sessions to expire.
+
+#### 🛑 Pitfall 5: Configuration Loss Across System Upgrades
+* **Symptom**: Losing `/etc/config/pon` after a clean firmware flash leaves the device disconnected.
+* **Solution**: Run `/usr/sbin/backup-fiberhome-pon.sh` once. It archives your credentials to `/etc/fiberhome_pon_backup.uci` and adds them to `/etc/sysupgrade.conf`. Use `/usr/sbin/restore-fiberhome-pon.sh` for one-click restoration if ever needed.
+
+---
+
+### 4. Verification & O5 Diagnostic Indicators
+
+Run the following command to verify registration status:
+
+```bash
+pondctl status --line line0
+```
+
+**✅ Expected Output for Healthy Registration**:
+```json
+{
+  "channel_available": true,
+  "loid_configured": true,
+  "authentication_status": 1,
+  "authentication_meaning": "accepted",
+  "olt_vendor_id": "HWTC",
+  "backend_state": "applied",
+  "vlan_ids": [1, 41, 45]
+}
+```
+* `authentication_meaning`: `"accepted"` confirms valid credential verification.
+* `backend_state`: `"applied"` confirms provisioned GEM Port and T-CONT data paths.
+* `vlan_ids`: Includes your local Internet (`41`) and IPTV (`45`) tags.
+
+---
+
+---
+
 ## 🚀 Sing-Box Native `auto-redirect` Configuration
 
 With `nfnetlink_queue` compiled in, Sing-Box handles redirection natively:

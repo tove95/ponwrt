@@ -172,6 +172,127 @@ ssh root@192.168.1.1 "sysupgrade -v -c /tmp/sysupgrade.bin"
 
 ---
 
+## 📖 兆能 ZN504XG-D PON 上线与 OLT 注册通关指南 (含踩坑实录)
+
+将**兆能 ZN504XG-D**（达发 Airoha AN7581）替换电信原装光猫（如华为 HS8145X6、烽火 HG5585F 等）并直连光纤上线，是发挥这台光猫 2.5G 性能的核心场景。
+
+许多机友在换猫时常遇到**“状态在 O1~O5 反复跌落”、“光猫注册瞬时断开”、“PPPoE 无法获取报文”**等难题。以下整理自实机反复抓包与验证的完整通关配置与避坑血泪总结。
+
+### 1. 换猫前必须提取的“原光猫 4 要素”
+
+在拔下原运营商光猫前，务必登录原光猫后台或拍照记录以下核心参数：
+
+| 参数项 | 说明 | 示例 (以电信原猫为例) |
+| :--- | :--- | :--- |
+| **PON SN (序列号)** | 原光猫机身背部标签或后台显示的 PON 序列号（前 4 位通常为厂商代码，后 8 位为十六进制） | `48575443XXXXXXXX` (`HWTC` 华为) 或 `FHTTXXXXXXXX` |
+| **宽带 LOID** | 电信逻辑 ID (逻辑识别码)，部分地区装维工单上称为“宽带识别码/逻辑认证码” | 手机号或 `SZ10000XXXXXX` (若有密码一并记录，无密码留空) |
+| **设备厂商与型号** | 原光猫设备型号代码与硬件版本号 | 厂商: `HWTC` 或 `FHTT`，型号: `HS8145X6` 或 `HG5585FV1.0` |
+| **上网 VLAN ID** | 原光猫网络配置中“Internet”业务绑定的 VLAN Tag（关键！） | 深圳电信常用 `41`，部分地区为 `43` 或 `46`，组播通常为 `45` |
+| **宽带账号与密码** | PPPoE 拨号账号与密码 | `0755XXXXXXXX@163.gd` |
+
+---
+
+### 2. ZN504 Web 界面与配置文件对照
+
+登录 ZN504 后台（默认 `http://192.168.1.1`），进入 **网络 (Network) -> PON 设置 (PON Configuration)**：
+
+#### ① 基础线路配置 (Line 0)
+- **物理接口 (Device)**: `pon0`
+- **链路制式 (Mode)**: **`xgpon`**（绝大多数电信 10G 光纤为 XG-PON；若是千兆 GPON 则选 `gpon`，若是联通/移动 10G-EPON 则选 `epon`）
+- **PON 序列号 (Serial Number)**: 填入原光猫的完整 16 位 SN（如 `48575443XXXXXXXX`）
+
+#### ② OMCI 协议认证参数 (Line 0 OMCI)
+- **厂商代码 (Vendor ID)**: **`FHTT`**（⚠️ 见后文核心避坑 1，即使原猫是华为也强烈推荐填 `FHTT`）
+- **设备标识 (Equipment ID)**: **`HS8145X6 (PON ONT)`**（⚠️ 见后文核心避坑 2，必须带括号）
+- **硬件版本 (Hardware Version)**: `HG5585FV1.0`
+- **软件版本 (Software Version)**: `RP0100`
+- **宽带识别码 (LOID)**: 填入你的真实电信 LOID（如 `SZXXXXXXXXX`）
+- **运营商标识 (Operator ID)**: `CTC`（中国电信）
+
+#### 配置文件底层对应 (`/etc/config/pon`)：
+```uci
+config xpon 'line0'
+	option device 'pon0'
+	option serial_number '48575443XXXXXXXX'
+	option mode 'xgpon'
+
+config omci 'line0_omci'
+	option line 'line0'
+	option device 'omci0'
+	option omcc_version '0x86'
+	option vendor_id 'FHTT'
+	option equipment_id 'HS8145X6 (PON ONT)'
+	option hardware_version 'HG5585FV1.0'
+	option software_version 'RP0100'
+	option loid 'SZXXXXXXXXXXXXX'
+	option operator_id 'CTC'
+```
+
+---
+
+### 3. ⚠️ 核心避坑实录（高频翻车点详解）
+
+#### 🛑 避坑一：局端 OLT 是华为时，千万不要把 Vendor ID 填成 `HWTC`！
+* **翻车现象**：许多机友认为“原猫是华为，我肯定要一模一样填 `HWTC`”。结果光猫能瞬时冲到 O5 状态，但在 **100 毫秒内就会被局端断开**（内核报 `Deactivate_ONU-ID`），在 `O1 -> O2 -> O4 -> O5 -> O2` 之间死循环跌落掉线。
+* **技术真相（抓包逆向）**：
+  局端华为 OLT 面对上报为“华为自家设备（`HWTC`）”的光猫时，会触发极其严苛的**华为闭源私有校验（连续下发 ME Class 350 分区指纹与 Class 373 硬件校验）**。开源 PonWrt 并不包含华为闭源系统的专有应答，华为 OLT 校验失败后立刻判定该设备为“非法假冒华为光猫”，随即发送指令强行断开。
+* **破局妙招（降维兼容）**：
+  运营商机房的华为 OLT 必须兼容全网第三方设备。将 `vendor_id` 填为 **`FHTT`（烽火）** 时，华为 OLT 会判定接入的是第三方设备，**自动关闭华为专属私有探测，退回到标准中国电信 CTC / ITU-T G.988 开放规范**，直接通过 LOID 顺利认证并下发数据通道！
+
+#### 🛑 避坑二：设备标识 (Equipment ID) 必须带有完整后缀 `(PON ONT)`
+* **翻车现象**：只填 `HS8145X6` 或只填 `HG5585F`，光纤握手成功但机房始终不下发 GEM Port 业务通道。
+* **解决办法**：机房 ITMS / OLT 数据库中录入的设备全称格式是 **`HS8145X6 (PON ONT)`**（注意带空格和半角括号），完整填写后机房才会匹配对应的业务模板下发 VLAN。
+
+#### 🛑 避坑三：PPPoE 拨号必须绑定 VLAN 接口，切勿直接绑 `pon0`
+* **翻车现象**：光路已经顺利进入稳定 O5，但创建的 WAN 拨号永远发 PADI 超时无响应。
+* **技术真相**：电信光纤宽带在 OLT 端全部划分了业务 VLAN。上网业务不是运行在纯二层物理网卡 `pon0` 上的，而是承载在对应 VLAN 的虚拟子接口上。
+* **正确操作**：在 **网络 -> 接口** 中，将 WAN 的物理设备指定为 **`pon0.41`**（若当地上网 VLAN 是 41），或者在设备列表中创建名为 `pon0.41` 的 802.1q VLAN 接口再进行 PPPoE 拨号。
+
+#### 🛑 避坑四：原光猫会话锁定（BRAS 28103012 错误）
+* **翻车现象**：PPPoE 握手成功但鉴权失败，日志报错：
+  > `Remote message: 28103012: check user-name in black list. failed! / PAP authentication failed`
+* **技术真相**：原光猫未点击“断开连接”直接拔掉光纤，电信机房 BRAS 的在线会话（Session）未超时释放，认为该账号存在双拨行为触发风控拉黑。
+* **解决办法**：换猫前建议在老光猫后台点击“断开网络”；若已拔掉，只需静置拔光纤状态等待 3~5 分钟，让电信机房自动释放旧会话即可恢复拨号。
+
+#### 🛑 避坑五：固件升级导致 `/etc/config/pon` 丢失变砖
+* **翻车现象**：好不容易调通上线，后续更新系统时一旦刷写清除了配置，开机直接失联。
+* **解决方案**：本项目固件已深度内置保护脚本，终端执行一次：
+  ```bash
+  /usr/sbin/backup-fiberhome-pon.sh
+  ```
+  该脚本会自动备份参数至 `/etc/fiberhome_pon_backup.uci` 并永久写入 `/etc/sysupgrade.conf` 白名单。升级后若遇异常，执行 `/usr/sbin/restore-fiberhome-pon.sh` 秒级回滚恢复。
+
+---
+
+### 4. 链路诊断与成功标志（如何确认已完美 O5）
+
+在终端执行以下指令可快速验证光纤注册全貌：
+
+```bash
+# 查看 PON 守护进程状态
+pondctl status --line line0
+```
+
+**✅ 完美成功输出标志**：
+```json
+{
+  "channel_available": true,
+  "loid_configured": true,
+  "authentication_status": 1,
+  "authentication_meaning": "accepted",
+  "olt_vendor_id": "HWTC",
+  "backend_state": "applied",
+  "vlan_ids": [1, 41, 45]
+}
+```
+* `authentication_meaning`: 显示 **`"accepted"`** 表示认证通过；
+* `backend_state`: 显示 **`"applied"`** 表示电信机房已成功下发通道；
+* `vlan_ids`: 列表中包含 **`41`**（上网）和 **`45`**（IPTV）等 VLAN，说明光猫已具备完整通网能力！
+
+---
+
+---
+
 ## 🚀 Sing-Box 原生 `auto-redirect` 配置示例
 
 固件内置的 `nfnetlink_queue` 驱动可直接支持 Sing-Box 的原生透明重定向。
