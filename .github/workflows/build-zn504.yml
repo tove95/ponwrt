@@ -138,11 +138,12 @@ jobs:
               - 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈
               - 解锁 AN7581 4 核 1.2GHz 动态满频调频，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
             * **集成 QWRT 核心硬件特性**：
-              - 片上 Inside Secure SafeXcel EIP-93 硬件密码协处理器驱动 (`kmod-crypto-hw-eip93`, `kmod-cryptodev`)
               - Airoha AN7581 NPU / PPE 硬件流量转发加速 (`luci-app-airoha-npu`, `luci-app-hqos`)
               - CPU 调频策略与频率管理 (`luci-app-cpufreq`)
               - 磁盘与存储分区管理 (`luci-app-diskman`)
               - 网页终端 (`luci-app-ttyd`)
+            * **第一性原理纯净加解密流水线**：
+              - 遵循 ImmortalWrt 官方实践 (da63f7d)，彻底剔除 SafeXcel / EIP-93 协处理器 (`kmod-crypto-hw-eip93`)，杜绝 DMA 缓存颠簸与硬中断抢占，释放 4 核 NEON 极速运算 WireGuard (ChaCha20) 与 Momo 用户态代理
             * **精简纯净架构**：
               - 彻底移除冗余重型插件（Lucky、Samba4、集客AC、WOL、AutoReboot、UPnP、RAMFree），大幅减小固件体积并缩短编译时间
             * **集成 Kahen 项目精华**：

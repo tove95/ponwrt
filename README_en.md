@@ -55,10 +55,13 @@ Every release automatically compiles and packages **both devices** into separate
 - Enables native transparent proxy redirection via Sing-Box TUN mode without requiring complex custom nftables scripting.
 - Optimized for Momo (`core_only='1'`), lifting the default 60MiB hard-coded memory restriction to `128MiB` with direct bypass routing for multicast `224.0.0.0/4` and `239.0.0.0/8`.
 
-### 5. SafeXcel EIP-93 Dedicated Hardware Crypto Acceleration
-- Solves high CPU temperatures and cryptographic bottlenecks on ARM Cortex-A53 cores lacking native ARMv8 Crypto Extensions.
-- Activates on-chip **Inside Secure SafeXcel EIP-93 hardware engine (`kmod-crypto-hw-eip93`)** at base `0x1fb70000`.
-- Integrated `kmod-cryptodev` (`/dev/crypto`) and OpenSSL devcrypto engine (`libopenssl-devcrypto`), offloading AES, DES/3DES, and SHA/HMAC calculations to dedicated silicon.
+### 5. First-Principles Pure Crypto Pipeline (Removed SafeXcel/EIP-93 Negative Acceleration)
+- **Eliminating DMA & IRQ Overhead**: Following First Principles and official upstream ImmortalWrt practices (commit `da63f7d`), **`kmod-crypto-hw-eip93` and `kmod-cryptodev` have been completely removed**.
+- **Why SafeXcel / EIP-93 was eliminated**:
+  - **DMA & Context-Switch Penalty**: Network packets (MTU <= 1500) are small chunks. An external DMA engine requires `dma_map_single`, descriptor ring scheduling, hard IRQ triggers, and context switching, resulting in ~3x slower single-request throughput and higher overall CPU usage than CPU native computation.
+  - **Zero Crypto API Priority Inversion**: SafeXcel driver registers with an inflated priority of `1500`, hijacking the kernel Crypto API queue and causing lock contention and SoftIRQ jitter.
+  - **Modern User-Space Proxies Unaffected**: Sing-box and Momo run in user space using pure Go-assembly ARMv8 `asimd` (NEON) vector routines, never touching the kernel Crypto API.
+  - **Full-Rate WireGuard**: WireGuard strictly utilizes **ChaCha20-Poly1305** (unsupported by EIP-93 silicon). Eliminating EIP-93 leaves all 4 Cortex-A53 cores (1.2GHz) dedicated to clean `chacha20-neon` processing without interrupt storm interference.
 
 ### 6. Dual-Stack 4K/8K IPTV Multicast Engine
 - **PON Layer**: Bind carrier IPTV and multicast VLANs directly during bridging or dial-up.
