@@ -88,7 +88,7 @@ jobs:
       - name: Organize output files
         run: |
           mkdir -p output
-          find bin/targets/airoha/an7581/ -type f \( -name "*zn504*" -o -name "*hg5585f*" \) \( -name "*sysupgrade.itb" -o -name "*recovery.itb" -o -name "*manifest" \) -exec cp {} output/ \;
+          find bin/targets/airoha/an7581/ -type f \( -name "*zn504*" -o -name "*hg5585f-ct*" \) ! -name "*usb-sfp*" \( -name "*sysupgrade.itb" -o -name "*recovery.itb" -o -name "*manifest" \) -exec cp {} output/ \;
           cd output
           for file in $(ls * 2>/dev/null); do
             [ -f "$file" ] && sha256sum "$file" > "${file}.sha256"
@@ -117,12 +117,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: PonWrt ZN504XG-D & HG5585F 双机型聚合增强固件 (${{ steps.tag.outputs.release_tag }})
+          name: PonWrt ZN504XG-D & HG5585F 电信版聚合增强固件 (${{ steps.tag.outputs.release_tag }})
           body: |
-            ### PonWrt Airoha AN7581 聚合增强固件 (ZN504XG-D & HG5585F)
+            ### PonWrt Airoha AN7581 聚合增强固件 (ZN504XG-D & HG5585F 电信版)
             * **适用机型**：
               - **烽火/中移 ZN504XG-D**：纯有线 2.5G 高性能光猫（AN7581 + EN8811H 2.5G 网口）
-              - **烽火 HG5585F (CT 电信版 / CU 联通版)**：带 Wi-Fi 6 (MT7916D DBDC AX3000 + NPU WED 硬件加速)
+              - **烽火 HG5585F (CT 电信版)**：带 Wi-Fi 6 (MT7916D DBDC AX3000 + NPU WED 硬件加速，原生保留 USB 3.0 超高速接口)
             * **后台管理**：`192.168.1.1`（用户名: `root`，默认无密码）
             * **Wi-Fi 7 / 6 特性 (HG5585F)**：
               - 集成 MediaTek MT7916 驱动与 NPU WED 硬件加速固件 (`en7581_MT7916_npu_rv32.bin`)

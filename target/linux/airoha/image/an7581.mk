@@ -210,36 +210,10 @@ define Device/fiberhome_hg5585f-ct
 endef
 TARGET_DEVICES += fiberhome_hg5585f-ct
 
-define Device/fiberhome_hg5585f-cu
-  $(call Device/fiberhome_hg5585f-common)
-  DEVICE_MODEL := HG5585F
-  DEVICE_VARIANT := CU
-  DEVICE_DTS := an7581-fiberhome-hg5585f-cu
-  SUPPORTED_DEVICES += fiberhome,hg5585f-cu-usb-sfp
-  $(call Device/fiberhome_hg5585f-images)
-endef
-TARGET_DEVICES += fiberhome_hg5585f-cu
-
-define Device/fiberhome_hg5585f-ct-usb-sfp
-  $(call Device/fiberhome_hg5585f-common)
-  DEVICE_MODEL := HG5585F
-  DEVICE_VARIANT := CT-USB-SFP
-  DEVICE_DTS := an7581-fiberhome-hg5585f-ct-usb-sfp
-  DEVICE_PACKAGES += kmod-phy-maxlinear
-  SUPPORTED_DEVICES += fiberhome,hg5585f-ct
-  $(call Device/fiberhome_hg5585f-images)
-endef
-TARGET_DEVICES += fiberhome_hg5585f-ct-usb-sfp
-
-define Device/fiberhome_hg5585f-cu-usb-sfp
-  $(call Device/fiberhome_hg5585f-common)
-  DEVICE_MODEL := HG5585F
-  DEVICE_VARIANT := CU-USB-SFP
-  DEVICE_DTS := an7581-fiberhome-hg5585f-cu-usb-sfp
-  SUPPORTED_DEVICES += fiberhome,hg5585f-cu
-  $(call Device/fiberhome_hg5585f-images)
-endef
-TARGET_DEVICES += fiberhome_hg5585f-cu-usb-sfp
+# Disabled to streamline builds: only release ZN504XG-D and HG5585F CT standard
+# TARGET_DEVICES += fiberhome_hg5585f-cu
+# TARGET_DEVICES += fiberhome_hg5585f-ct-usb-sfp
+# TARGET_DEVICES += fiberhome_hg5585f-cu-usb-sfp
 
 # Both models share the UBI boot chain and store device data in factory.
 define Device/znxt_zn50xg-d-common
