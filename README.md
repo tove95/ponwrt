@@ -25,11 +25,18 @@
 - **工厂 EEPROM 校准自动提取**：内置 `/etc/hotplug.d/firmware/10-mt7916-an-eeprom` 与 `/etc/init.d/mt7916-an-eeprom`（在 `kmodloader` 加载驱动前于 `START=08` 执行），开机自动从 UBI `factory` 分区的 `0x1000` 偏移处提取 4KB 射频校准数据，校验 `0x7916` 硬件魔数并无缝提供给驱动。
 - **独立 MAC 地址算号机制**：内置 `/lib/preinit/07_an7581_bsp_wifi_mac`，开机预初始化阶段自动从 `factory` 分区读取基准 MAC 并计算 2.4G (`base + 6`) 与 5G (`base + 7`) 独立合法硬件地址。
 - **射频功率校准表**：预置 `SingleSKU` 与 `mt7916-sku.dat` / `mt7916-sku-bf.dat` 波束成形数据。
+- **异步无线扫描防卡死机制**：集成 `rpcd` 异步信道扫描补丁（`133-rpcd-async-scan.patch`），将长耗时的 Wi-Fi 信道扫描任务从主事件循环解耦并放入子进程与延迟请求队列，彻底杜绝在 LuCI 界面点击扫描周围无线 AP 时造成的 Web 控制台无响应与 504 Gateway Timeout。
 
-### 2. Airoha AN7581 原生 PON 光猫全栈驱动
+### 2. Airoha AN7581 原生 PON 光猫全栈驱动与局端兼容性增强
 - 内置 `kmod-airoha-xpon`、`kmod-airoha-en7572` (BOSA)、`kmod-phy-airoha-en8811h` (2.5G PHY)、`airoha-en7581-npu-firmware` (NPU 硬件加速)。
 - 内置 `airoha-pond`、`airoha-ponctl`、`luci-app-pon`。
 - 支持 GPON / XG-PON / XGS-PON **O5 正常营运状态**注册认证，支持 Vendor ID（如 `FHTT`）、Equipment ID（如 `HS8145X6 (PON ONT)`）、PON SN、LOID、Password、MAC 克隆及 BOSA 校准卷管理。
+- **达发 EN7572 激光冷启动防抖与闭锁保护**：集成 8 次连续硬件采样确认（140ms 稳定期），彻底修复光猫冷启动上电瞬间激光器未完全出光而偶发误报 `SYS_TX_READY` 导致被局端 OLT 秒踢下线的顽疾。
+- **增强型特殊局端 OLT（华为/中兴）排查能力**：
+  - **LOID 补零方向可调**：支持在 Web 界面自由选择 24 字节 LOID 的填充方向（左对齐 / 右对齐），完美解决部分省份局端 OLT 因 0x00 填充位置不同而报 `reason=0x01` 认证失败的问题；
+  - **链路原始报文字节（Wire Bytes）可视化**：在 LuCI 状态页直接展示上报给局端光纤的 16 进制原始报文及 ASCII 字符（含 `CTC ONU SN (0xC7/0x0001)` 与实际发送的 `LOID`），免去抓包痛苦；
+  - **Web 界面一键覆盖 PON MAC**：支持在页面直接克隆旧光猫的 PON MAC 地址，用于通过局端 MAC 绑定校验。
+- **纯净网络配置生成**：修复并移除 `config_generate` 为 DHCP 网络自动生成冗余 `wan6` 客户端接口的逻辑，杜绝桥接与双栈网络下的 DHCPv6 广播风暴与接口路由冲突。
 - 实时光功率（接收/发射）、供电电压、芯片温度检测与全链路遥测告警。
 
 ### 3. Airoha 8核 NPU / PPE 硬件流量卸载（Fastpath 线速直转）
@@ -331,8 +338,10 @@ make -j$(nproc) || make -j1 || make -j1 V=s
 - **[ImmortalWrt](https://github.com/immortalwrt/immortalwrt)**：提供高度优化、特性丰富的中国本地化 OpenWrt 构建环境。
 - **[pbs05/ponwrt](https://github.com/pbs05/ponwrt)**：达发 Airoha AN7581 / AN7583 PON 光猫开源架构与驱动的奠基之作，本项目核心源码基底。
 - **QWRT 固件团队 / 开发者**：为达发芯片探索出 SafeXcel EIP-93 硬件密码协处理器驱动、PPE 硬件流表加速与 Wi-Fi WED 硬件直转的优秀实践范例。
+- **[NNdroid](https://github.com/NNdroid)**：提供 EN7572 激光冷启动防抖确认补丁、LOID 填充方向调节及 CTC 原始报文分析回显工具链。
 - **[Kahen/PonWrt-CI-UBI](https://github.com/Kahen/PonWrt-CI-UBI)**：提供 AN7581 SoC 精确温度遥测方案 (`temperature-rpc.uc` 与 LuCI RPC 联动)、MTD 读写保护 (`kmod-mtd-rw`)、自动化 CI 构建经验。
-- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**：提供 XG-PON 线路与 PPPoE 线速流量硬件卸载（4.5% 超低 CPU 占用）实践。
+- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**：提供 XG-PON 线路与 PPPoE 线速流量硬件卸载（4.5% 超低 CPU 占用）实践及 `rpcd` 异步无线扫描防卡死机制。
+- **[oenhu](https://github.com/oenhu)**：贡献 PR #116 优化，避免 DHCP 网络冗余生成 `wan6` 接口引起的路由竞争。
 - **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**：新一代高性能网络代理核心。
 - **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**：极简高效的 OpenWrt sing-box 透明网关前端与控制面板。
 - **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**：达发 AN7581 独立 8 核 RISC-V NPU / PPE 运行状态与硬件流表监控看板。

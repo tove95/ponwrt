@@ -1,0 +1,1357 @@
+From 64fa3c905ff4bb648374206f559e014d8ae764a5 Mon Sep 17 00:00:00 2001
+From: NNdroid <99177648+NNdroid@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 13:27:20 +0800
+Subject: [PATCH] airoha-xpon: recover a wedged EPON LLID epoch with a real
+ line re-open
+
+Cold start on this hardware can leave the EPON MAC in an LLID epoch the OLT
+never grants upstream slots for: the line registers, misses every grant one
+second later and loops. Nothing inside the driver could repair that state.
+The only sequence measured to work is the userspace "ip link set down;
+sleep 1; up", which runs controller_stop() outside state_lock. A caller that
+already holds that lock deadlocks, because controller_stop() calls
+synchronize_irq() before taking it while the threaded handler owns it first.
+
+- Add a reopen worker that owns no lock the teardown needs and reproduces the
+  userspace sequence: rtnl_lock, dev_close, one second of discharge, then
+  dev_open. It takes rtnl first, the only lock order ndo_open/ndo_stop and the
+  rest of the driver use.
+- Track ownership across the close with reopen_holding. controller_stop()
+  clears stopping and the active mode, so without it a retry after a failed
+  open cannot tell a line the worker closed from one netifd took down. The
+  worker also retries itself, because link_work exits as soon as stopping is
+  set and would otherwise leave the line down for good.
+- Escalate: the first cycle after 5 s, later ones after 30 s, and the third
+  also reloads the provider firmware, the one step that brings a wedged
+  EN7572 back.
+- Ask for the reopen as soon as the burst gate has been dark for 5 s, instead
+  of waiting for three short-lived registrations to prove the same thing.
+
+Two findings from the first cold boot that this recovery exposed:
+
+- The EN7572 reports SYS_TX_READY 3.9 s after the gate opens and clears it
+  again before the 4 s capture, while the laser is still dark: the TX power
+  ADC read 0x0001 instead of the 0x466e of a lit burst. The MAC trusted that
+  sample, answered the Discovery Gate in that window and lost the LLID one
+  second later. Require eight consecutive 20 ms polls before publishing ready,
+  and restart that run on every gate transition.
+- Log the whole epoch so a future failure can be read from dmesg alone:
+  registration_epoch plus a reason on every reset, the MAC-start register
+  dump, each Register Request, every MPCP timeout snapshot with the rx/tx MPCP
+  counters, carrier transitions and OAM channel handovers. All of it is
+  dev_dbg, so it costs nothing until dynamic debug is enabled.
+
+Bump both package releases.
+---
+ airoha-pon-frontends/Makefile             |   2 +-
+ airoha-pon-frontends/src/airoha-en7572.c  |  54 +++-
+ airoha-xpon/Makefile                      |   2 +-
+ airoha-xpon/src/airoha-xpon-diagnostics.c |  35 +-
+ airoha-xpon/src/airoha-xpon-epon.c        | 371 +++++++++++++---------
+ airoha-xpon/src/airoha-xpon-epon.h        |   6 +-
+ airoha-xpon/src/airoha-xpon-main.c        | 239 +++++++++++++-
+ airoha-xpon/src/airoha-xpon-oam.c         |   4 +
+ airoha-xpon/src/airoha-xpon-private.h     |  70 +++-
+ 9 files changed, 594 insertions(+), 189 deletions(-)
+
+diff --git a/airoha-pon-frontends/Makefile b/airoha-pon-frontends/Makefile
+index b6b28ce..823baec 100644
+--- a/airoha-pon-frontends/Makefile
++++ b/airoha-pon-frontends/Makefile
+@@ -5,7 +5,7 @@ include $(TOPDIR)/rules.mk
+ include $(INCLUDE_DIR)/kernel.mk
+ 
+ PKG_NAME:=airoha-pon-frontends
+-PKG_RELEASE:=13
++PKG_RELEASE:=14
+ PKG_LICENSE:=GPL-2.0-only
+ 
+ include $(INCLUDE_DIR)/package.mk
+diff --git a/airoha-pon-frontends/src/airoha-en7572.c b/airoha-pon-frontends/src/airoha-en7572.c
+index db5f125..bf59429 100644
+--- a/airoha-pon-frontends/src/airoha-en7572.c
++++ b/airoha-pon-frontends/src/airoha-en7572.c
+@@ -146,6 +146,8 @@ struct en7572 {
+ 	struct delayed_work ready_work;
+ 	unsigned long gate_opened;
+ 	bool tx_ready_state;
++	/* Consecutive samples that read SYS_TX_READY; see en7572_ready_work(). */
++	unsigned int ready_confirm;
+ };
+ 
+ static u8 en7572_bob_u8(struct en7572 *en, unsigned int base,
+@@ -683,6 +685,15 @@ static bool en7572_tx_ready(struct en7572 *en)
+ #define EN7572_READY_POLL_MS        20
+ #define EN7572_READY_POLL_WINDOW_MS 8000
+ #define EN7572_READY_POLL_IDLE_MS   1000
++/*
++ * One sample is not evidence. On this hardware SYS_TX_READY came up 3.9 s after
++ * the gate opened and was already clear again at the 4 s capture, while the
++ * laser was still dark (TX power ADC read 0x0001 instead of 0x466e). The MAC
++ * answered Gates in that window and every registration it won died one second
++ * later. Require the latch to hold across a run longer than that false window,
++ * which costs about 140 ms once the analog path really does settle.
++ */
++#define EN7572_READY_CONFIRM        8
+ 
+ static bool en7572_tx_ready_cached(struct airoha_pon_frontend *frontend)
+ {
+@@ -691,16 +702,27 @@ static bool en7572_tx_ready_cached(struct airoha_pon_frontend *frontend)
+ 	return READ_ONCE(en->tx_ready_state);
+ }
+ 
++/*
++ * Every gate transition restarts the run: a count left over from the previous
++ * burst would let the first sample of the next one publish ready on its own.
++ */
++static void en7572_clear_ready(struct en7572 *en)
++{
++	en->ready_confirm = 0;
++	WRITE_ONCE(en->tx_ready_state, false);
++}
++
+ /*
+  * Warm lines report ready within a few hundred milliseconds of the gate
+- * opening, cold ones need more than a second. Poll fast while the answer is
+- * still no so the MAC can answer the first capable Discovery Gate, then fall
+- * back to a slow poll that keeps the cached flag honest.
++ * opening, cold ones need more than a second. Poll fast until the answer
++ * settles, so the MAC answers the first Discovery Gate that really is backed
++ * by light, then fall back to a slow poll that keeps the cached flag honest.
+  */
+ static void en7572_ready_work(struct work_struct *work)
+ {
+ 	struct en7572 *en = container_of(to_delayed_work(work), struct en7572,
+ 	                                 ready_work);
++	bool hw_ready;
+ 	bool ready;
+ 	unsigned int delay;
+ 	u32 sys = 0;
+@@ -715,7 +737,13 @@ static void en7572_ready_work(struct work_struct *work)
+ 		return;
+ 	}
+ 
+-	ready = !!(sys & EN7572_SYS_TX_READY);
++	hw_ready = !!(sys & EN7572_SYS_TX_READY);
++	if (!hw_ready)
++		en->ready_confirm = 0;
++	else if (en->ready_confirm < EN7572_READY_CONFIRM)
++		en->ready_confirm++;
++
++	ready = en->ready_confirm >= EN7572_READY_CONFIRM;
+ 	if (ready != READ_ONCE(en->tx_ready_state)) {
+ 		WRITE_ONCE(en->tx_ready_state, ready);
+ 		if (ready)
+@@ -724,8 +752,16 @@ static void en7572_ready_work(struct work_struct *work)
+ 			         jiffies_to_msecs(jiffies - en->gate_opened));
+ 	}
+ 
++	/*
++	 * Keep the fast poll while the answer has not settled, so the run of
++	 * confirmations costs milliseconds instead of full idle periods. A line
++	 * that already settled drops back to the slow poll that keeps the cached
++	 * flag honest.
++	 */
+ 	if (ready)
+ 		delay = EN7572_READY_POLL_IDLE_MS;
++	else if (hw_ready)
++		delay = EN7572_READY_POLL_MS;
+ 	else if (time_after(jiffies, en->gate_opened +
+ 	                                 msecs_to_jiffies(
+ 	                                         EN7572_READY_POLL_WINDOW_MS)))
+@@ -926,7 +962,7 @@ static int en7572_prepare(struct airoha_pon_frontend *frontend,
+ 	mutex_lock(&en->lock);
+ 	en->prepared = false;
+ 	en->tx_gate_enabled = false;
+-	WRITE_ONCE(en->tx_ready_state, false);
++	en7572_clear_ready(en);
+ 	cancel_delayed_work(&en->ready_work);
+ 
+ 	ret = en7572_update_bits(en, EN7572_BEN_CTRL, EN7572_BEN_MODE_MASK,
+@@ -1138,7 +1174,7 @@ static int en7572_set_tx_enable(struct airoha_pon_frontend *frontend,
+ 			en->tx_gate_enabled = true;
+ 			/* A fresh gate starts dark until the analog path reports in. */
+ 			en->gate_opened = jiffies;
+-			WRITE_ONCE(en->tx_ready_state, false);
++			en7572_clear_ready(en);
+ 			mod_delayed_work(system_wq, &en->ready_work, 0);
+ 			/* Sample the burst path while it is supposed to be alive. */
+ 			en->sample_shot = 0;
+@@ -1151,7 +1187,7 @@ static int en7572_set_tx_enable(struct airoha_pon_frontend *frontend,
+ 		if (en->tx_disable)
+ 			gpiod_set_value_cansleep(en->tx_disable, 1);
+ 		en->tx_gate_enabled = false;
+-		WRITE_ONCE(en->tx_ready_state, false);
++		en7572_clear_ready(en);
+ 		cancel_delayed_work(&en->ready_work);
+ 		ret = en7572_update_bits(en, EN7572_BEN_CTRL,
+ 		                         EN7572_BEN_MODE_MASK,
+@@ -1173,7 +1209,7 @@ static int en7572_unprepare(struct airoha_pon_frontend *frontend)
+ 		gpiod_set_value_cansleep(en->tx_disable, 1);
+ 	en->tx_gate_enabled = false;
+ 	en->prepared = false;
+-	WRITE_ONCE(en->tx_ready_state, false);
++	en7572_clear_ready(en);
+ 	cancel_delayed_work(&en->ready_work);
+ 	ret = en7572_update_bits(en, EN7572_BEN_CTRL, EN7572_BEN_MODE_MASK,
+ 	                         EN7572_BEN_MODE_OFF);
+@@ -1200,7 +1236,7 @@ static int en7572_reset(struct airoha_pon_frontend *frontend)
+ 	mutex_lock(&en->lock);
+ 	en->prepared = false;
+ 	en->tx_gate_enabled = false;
+-	WRITE_ONCE(en->tx_ready_state, false);
++	en7572_clear_ready(en);
+ 	cancel_delayed_work(&en->ready_work);
+ 	if (en->tx_disable)
+ 		gpiod_set_value_cansleep(en->tx_disable, 1);
+diff --git a/airoha-xpon/Makefile b/airoha-xpon/Makefile
+index e0ecc17..f34b34e 100644
+--- a/airoha-xpon/Makefile
++++ b/airoha-xpon/Makefile
+@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
+ include $(INCLUDE_DIR)/kernel.mk
+ 
+ PKG_NAME:=airoha-xpon
+-PKG_RELEASE:=69
++PKG_RELEASE:=71
+ PKG_LICENSE:=GPL-2.0-only
+ 
+ include $(INCLUDE_DIR)/package.mk
+diff --git a/airoha-xpon/src/airoha-xpon-diagnostics.c b/airoha-xpon/src/airoha-xpon-diagnostics.c
+index 6f99501..826f6e8 100644
+--- a/airoha-xpon/src/airoha-xpon-diagnostics.c
++++ b/airoha-xpon/src/airoha-xpon-diagnostics.c
+@@ -607,7 +607,9 @@ static int pon_registration_debug_show(struct seq_file *m, void *unused)
+ 			"sync_losses: %u\n"
+ 			"recoveries: %u\n"
+ 			"full_reinitializations: %u\n"
+-			"frontend_reloads: %u\n"
++			"registration_epoch: %u\n"
++			"reopens: %u\n"
++			"reopen_reloads: %u\n"
+ 			"registered_lifetime_ms: %u\n"
+ 			"last_registration_lifetime_ms: %u\n"
+ 			"last_register_status: 0x%08x\n",
+@@ -621,7 +623,8 @@ static int pon_registration_debug_show(struct seq_file *m, void *unused)
+ 			xpon->epon.mpcp_timeout_count,
+ 			xpon->epon.sync_loss_count, xpon->epon.recovery_count,
+ 			xpon->epon.full_reinit_count,
+-			xpon->epon.frontend_reset_count,
++			xpon->epon.registration_epoch, xpon->epon.reopen_count,
++			xpon->epon.reopen_reload_count,
+ 			xpon->epon.registered_since ?
+ 				jiffies_to_msecs(jiffies -
+ 		                                 xpon->epon.registered_since) :
+@@ -650,11 +653,12 @@ static int pon_registration_debug_show(struct seq_file *m, void *unused)
+ DEFINE_SHOW_ATTRIBUTE(pon_registration_debug);
+ 
+ /*
+- * One forced TX-lane recovery, used to exercise the path on a healthy line
+- * instead of waiting for a wedge:
++ * Request one line recovery now, instead of waiting for a wedge to raise it:
+  *
+- *   echo 1 > .../recover_tx   re-arm the burst path (stage 1)
+- *   echo 2 > .../recover_tx   reload the frontend firmware (stage 2)
++ *   echo 1 > .../recover_tx   close and re-open the line
++ *   echo 2 > .../recover_tx   the same, plus an optical firmware reload
++ *
++ * The worker runs the cycle asynchronously, so this only queues it.
+  */
+ static ssize_t pon_recover_tx_write(struct file *file,
+                                     const char __user *user_buf, size_t count,
+@@ -669,14 +673,21 @@ static ssize_t pon_recover_tx_write(struct file *file,
+ 		return -EFAULT;
+ 	input[count] = '\0';
+ 
+-	if (input[0] == '2')
+-		WRITE_ONCE(xpon->epon.frontend_reload_forced, true);
+-	else if (input[0] == '1' || input[0] == 'y' || input[0] == 'Y')
+-		WRITE_ONCE(xpon->epon.frontend_reset_forced, true);
+-	else
++	mutex_lock(&xpon->state_lock);
++	if (input[0] == '2') {
++		xpon->epon.reopen_reload = true;
++		xpon->epon.reopen_pending = true;
++	} else if (input[0] == '1' || input[0] == 'y' || input[0] == 'Y') {
++		xpon->epon.reopen_pending = true;
++	} else {
++		mutex_unlock(&xpon->state_lock);
+ 		return -EINVAL;
++	}
++	/* A manual request ignores the cooldown left by the last attempt. */
++	xpon->epon.reopen_after = 0;
++	mutex_unlock(&xpon->state_lock);
+ 
+-	mod_delayed_work(system_wq, &xpon->link_work, 0);
++	schedule_delayed_work(&xpon->reopen_work, 0);
+ 	return count;
+ }
+ 
+diff --git a/airoha-xpon/src/airoha-xpon-epon.c b/airoha-xpon/src/airoha-xpon-epon.c
+index 27d39db..9d70b91 100644
+--- a/airoha-xpon/src/airoha-xpon-epon.c
++++ b/airoha-xpon/src/airoha-xpon-epon.c
+@@ -166,20 +166,13 @@
+  */
+ #define AIROHA_EPON_DISCOVERY_SILENT_REQUESTS 3
+ /*
+- * A registered ONU that misses this many consecutive MPCP grants is not being
+- * outvoted by the OLT: its burst engine stopped reaching the fibre. The EN7572
+- * keeps a static bias in that state, so TX power collapses while every register
+- * stays readable, and only a provider firmware reload clears it.
++ * A registered ONU that misses this many consecutive MPCP grants was not
++ * outvoted by the OLT: its LLID epoch is dead. Nothing inside this file can
++ * repair that - see airoha_xpon_epon_reopen_begin() - so the timeout path only
++ * counts and asks for a line close/open.
+  */
+ #define AIROHA_EPON_TX_WEDGE_TIMEOUTS     3
+ #define AIROHA_EPON_TX_WEDGE_EPOCH_MS     5000
+-#define AIROHA_EPON_TX_WEDGE_RETRY_MS     30000
+-/*
+- * Re-arming only repeats the frontend's prepare() cycle, so it can be tried
+- * before the firmware reload that is the step which can come back dark.
+- */
+-#define AIROHA_EPON_TX_REARM_ATTEMPTS     2
+-#define AIROHA_EPON_TX_REARM_RETRY_MS     15000
+ /* The standard MAC path starts at 0x20; OLT values are capped at 0x5f. */
+ #define AIROHA_EPON_SYNC_TIME_DEFAULT    0x20
+ #define AIROHA_EPON_SYNC_TIME_MAX        0x5f
+@@ -327,8 +320,12 @@ void airoha_xpon_epon_debug_mac(struct airoha_xpon *xpon, struct seq_file *m)
+ 	           "registered_timeout_streak: %u\n"
+ 	           "unanswered_requests: %u\n"
+ 	           "ever_registered: %u\n"
+-	           "burst_rearms: %u\n"
+-	           "frontend_reloads: %u\n",
++	           "registration_epoch: %u\n"
++	           "reopens: %u\n"
++	           "reopen_attempts: %u\n"
++	           "reopen_reloads: %u\n"
++	           "reopen_pending: %u\n"
++	           "reopen_holding: %u\n",
+ 	           airoha_epon_read(xpon, AIROHA_EPON_INT_STATUS),
+ 	           airoha_epon_read(xpon, AIROHA_EPON_INT_ENABLE),
+ 	           airoha_epon_read(xpon, AIROHA_EPON_INT_STATUS2),
+@@ -345,8 +342,11 @@ void airoha_xpon_epon_debug_mac(struct airoha_xpon *xpon, struct seq_file *m)
+ 	           xpon->epon.registered_timeout_streak,
+ 	           READ_ONCE(xpon->epon.requests_since_message),
+ 	           xpon->epon.ever_registered,
+-	           xpon->epon.tx_rearm_count,
+-	           xpon->epon.frontend_reset_count);
++	           xpon->epon.registration_epoch, xpon->epon.reopen_count,
++	           xpon->epon.reopen_attempts,
++	           xpon->epon.reopen_reload_count,
++	           xpon->epon.reopen_pending,
++	           xpon->epon.reopen_holding);
+ }
+ 
+ static void airoha_xpon_epon_set_discovery_state(struct airoha_xpon *xpon,
+@@ -395,13 +395,29 @@ static int airoha_xpon_epon_program_mac(struct airoha_xpon *xpon)
+ 	return airoha_xpon_epon_wait_mac_table(xpon);
+ }
+ 
+-static void airoha_xpon_epon_reset_registration(struct airoha_xpon *xpon)
++static void airoha_xpon_epon_reset_registration(struct airoha_xpon *xpon,
++                                                const char *reason)
+ {
++	enum airoha_epon_mpcp_state previous_state = xpon->epon.mpcp_state;
++	unsigned int previous_llid = xpon->epon.llid;
++	unsigned long lifetime = 0;
++
+ 	if (xpon->epon.registered_since) {
+-		xpon->epon.last_registration_lifetime =
+-			jiffies - xpon->epon.registered_since;
++		lifetime = jiffies - xpon->epon.registered_since;
++		xpon->epon.last_registration_lifetime = lifetime;
+ 		xpon->epon.registered_since = 0;
+ 	}
++	/*
++	 * Every reset opens a new LLID epoch. Log the reason and the state that
++	 * was abandoned, so a line that keeps rebuilding epochs can be traced
++	 * without turning on every other debug message.
++	 */
++	dev_dbg(xpon->dev,
++		"EPON epoch %u reset (%s): state=%u llid=0x%04x valid=%u registered=%u ms\n",
++		xpon->epon.registration_epoch, reason, previous_state,
++		previous_llid, xpon->epon.llid_valid,
++		jiffies_to_msecs(lifetime));
++	xpon->epon.registration_epoch++;
+ 	airoha_xpon_oam_set_link(xpon->oam, false, 0, 0);
+ 	airoha_xpon_set_data_path_link(xpon, false);
+ 	airoha_eth_pon_configure_epon(xpon->pon_netdev, 0, false);
+@@ -424,7 +440,7 @@ static void airoha_xpon_epon_reset_registration(struct airoha_xpon *xpon)
+ 
+ static void airoha_xpon_epon_enter_denied(struct airoha_xpon *xpon)
+ {
+-	airoha_xpon_epon_reset_registration(xpon);
++	airoha_xpon_epon_reset_registration(xpon, "denied");
+ 	xpon->epon.mpcp_state = AIROHA_EPON_MPCP_DENIED;
+ 	xpon->epon.denied_until =
+ 		jiffies + msecs_to_jiffies(AIROHA_EPON_NACK_SILENT_MS);
+@@ -523,7 +539,7 @@ static int airoha_xpon_epon_start_mac(struct airoha_xpon *xpon)
+ 	if (ret)
+ 		return ret;
+ 	xpon->epon.channel = 0;
+-	airoha_xpon_epon_reset_registration(xpon);
++	airoha_xpon_epon_reset_registration(xpon, "mac-start");
+ 	/* MPCP grants control BEN while the MAC is in burst mode. */
+ 	ret = airoha_pon_frontend_set_tx_enable(xpon->frontend, true);
+ 	if (ret)
+@@ -535,6 +551,18 @@ static int airoha_xpon_epon_start_mac(struct airoha_xpon *xpon)
+ 	                  AIROHA_EPON_INT_LINE_MASK);
+ 	xpon->mac_initialized = true;
+ 
++	/*
++	 * Dump the whole epoch setup: if a wedge is a replay, these values are
++	 * identical cycle after cycle, which rules out anything programmed here.
++	 */
++	dev_dbg(xpon->dev,
++		"%s MAC start: epoch=%u addr=%pM sync_time=0x%04x mpcp_timeout=0x%08x tx_adjust1=0x%08x glb_cfg=0x%08x tx_armed=%u\n",
++		airoha_xpon_mode_name(xpon->active_mode),
++		xpon->epon.registration_epoch, xpon->pon_netdev->dev_addr,
++		xpon->epon.sync_time,
++		airoha_epon_read(xpon, AIROHA_EPON_MPCP_TIMEOUT_INTERVAL),
++		airoha_epon_read(xpon, AIROHA_EPON_TRX_ADJUST_TIME1),
++		airoha_epon_read(xpon, AIROHA_EPON_GLB_CFG), xpon->tx_armed);
+ 	dev_info(xpon->dev,
+ 	         "%s MAC started; LLID0 is waiting for a Discovery Gate\n",
+ 	         airoha_xpon_mode_name(xpon->active_mode));
+@@ -633,6 +661,10 @@ int airoha_xpon_epon_start_rx(struct airoha_xpon *xpon)
+ 
+ void airoha_xpon_epon_stop_rx(struct airoha_xpon *xpon)
+ {
++	dev_dbg(xpon->dev,
++		"EPON RX stop: epoch=%u state=%u rx_active=%u pcs_synced=%u tx_armed=%u\n",
++		xpon->epon.registration_epoch, xpon->epon.mpcp_state,
++		xpon->rx_active, xpon->epon.pcs_synced, xpon->tx_armed);
+ 	airoha_pon_frontend_set_tx_enable(xpon->frontend, false);
+ 	xpon->tx_armed = false;
+ 	airoha_epon_write(xpon, AIROHA_EPON_INT_ENABLE, 0);
+@@ -648,7 +680,7 @@ void airoha_xpon_epon_stop_rx(struct airoha_xpon *xpon)
+ 	regmap_set_bits(xpon->scu, AIROHA_SCU_SSR3,
+ 	                AIROHA_SCU_EPON_LOGIC_RESET);
+ 	airoha_pcs_pon_stop_rx(xpon->pcs);
+-	airoha_xpon_epon_reset_registration(xpon);
++	airoha_xpon_epon_reset_registration(xpon, "rx-stop");
+ 	xpon->epon.pcs_synced = false;
+ 	xpon->epon.sync_loss_since = 0;
+ 	xpon->mac_initialized = false;
+@@ -680,6 +712,7 @@ bool airoha_xpon_epon_los(struct airoha_xpon *xpon)
+ 
+ static void airoha_xpon_epon_apply_sync_time(struct airoha_xpon *xpon)
+ {
++	u16 previous = xpon->epon.sync_time;
+ 	u16 observed, effective;
+ 
+ 	/*
+@@ -698,6 +731,12 @@ static void airoha_xpon_epon_apply_sync_time(struct airoha_xpon *xpon)
+ 	airoha_epon_write(xpon, AIROHA_EPON_TRX_ADJUST_TIME1,
+ 	                  AIROHA_EPON_TX_STAMP_ADJUST_BASE +
+ 	                          ((u32)effective << 16));
++
++	/* An OLT that never seeds the value is a fact worth seeing once. */
++	if (effective != previous)
++		dev_dbg(xpon->dev,
++			"EPON sync_time 0x%04x -> 0x%04x (OLT reported 0x%04x)\n",
++			previous, effective, observed);
+ }
+ 
+ static void
+@@ -716,6 +755,22 @@ airoha_xpon_epon_send_register_request_fast(struct airoha_xpon *xpon)
+ 
+ 	airoha_xpon_epon_apply_sync_time(xpon);
+ 
++	/*
++	 * Everything that decides whether this burst lands: the epoch, the
++	 * timing borrowed from the OLT, and how many requests are still
++	 * unanswered. A wedge replays these values unchanged on every cycle.
++	 * dev_dbg() costs nothing until dynamic debug is enabled, which keeps
++	 * this hard IRQ path inside its Discovery window by default.
++	 */
++	dev_dbg(xpon->dev,
++		"EPON Register Request %d: epoch=%u sync_time=0x%04x retry=%u unanswered=%u status=0x%08x llid_ctrl=0x%08x\n",
++		atomic_read(&xpon->epon.register_request_count) + 1,
++		xpon->epon.registration_epoch, xpon->epon.sync_time,
++		xpon->epon.discovery_retry,
++		READ_ONCE(xpon->epon.requests_since_message),
++		airoha_epon_read(xpon, AIROHA_EPON_LLID0_DISCOVERY_STATUS),
++		airoha_epon_read(xpon, AIROHA_EPON_LLID_DISCOVERY_CTRL));
++
+ 	airoha_xpon_epon_set_discovery_state(xpon,
+ 	                                     AIROHA_EPON_STATE_REGISTERING);
+ 	command = FIELD_PREP(AIROHA_EPON_DISCOVERY_LLID, 0) |
+@@ -742,11 +797,16 @@ static void airoha_xpon_epon_handle_register(struct airoha_xpon *xpon)
+ 	xpon->epon.register_message_count++;
+ 	/* Any MPCP message proves the burst reached the OLT. */
+ 	WRITE_ONCE(xpon->epon.requests_since_message, 0);
++	dev_dbg(xpon->dev,
++		"EPON MPCP message: epoch=%u status=0x%08x flag=%u llid=0x%04x valid=%u state=%u\n",
++		xpon->epon.registration_epoch, status, flag,
++		(unsigned int)FIELD_GET(AIROHA_EPON_LLID_VALUE, status),
++		!!(status & AIROHA_EPON_LLID_VALID), xpon->epon.mpcp_state);
+ 	if (flag == AIROHA_EPON_REGISTER_DEREGISTER) {
+ 		xpon->epon.deregister_count++;
+ 		dev_info(xpon->dev, "EPON deregister received: status=0x%08x\n",
+ 		         status);
+-		airoha_xpon_epon_reset_registration(xpon);
++		airoha_xpon_epon_reset_registration(xpon, "deregister");
+ 		return;
+ 	}
+ 	if (flag == AIROHA_EPON_REGISTER_NACK) {
+@@ -791,7 +851,10 @@ static void airoha_xpon_epon_complete_registration(struct airoha_xpon *xpon)
+ 	                                    xpon->epon.channel, true);
+ 	if (ret) {
+ 		xpon->last_start_error = ret;
+-		airoha_xpon_epon_reset_registration(xpon);
++		dev_warn(xpon->dev,
++		         "EPON data path configuration failed: %d; restarting the epoch\n",
++		         ret);
++		airoha_xpon_epon_reset_registration(xpon, "data-path-failed");
+ 		return;
+ 	}
+ 
+@@ -802,10 +865,25 @@ static void airoha_xpon_epon_complete_registration(struct airoha_xpon *xpon)
+ 	xpon->epon.registered_since = jiffies;
+ 	xpon->data_path.configured = true;
+ 	xpon->lifecycle = AIROHA_XPON_OPERATIONAL;
++	/*
++	 * A queued recovery is obsolete the moment the OLT grants the line
++	 * again: cancel_delayed_work() is non-blocking, which is all an IRQ
++	 * thread may do.
++	 */
++	if (xpon->epon.reopen_pending) {
++		xpon->epon.reopen_pending = false;
++		cancel_delayed_work(&xpon->reopen_work);
++		dev_dbg(xpon->dev,
++			"EPON line recovered before the queued re-open; dropping it\n");
++	}
+ 	airoha_xpon_oam_set_link(xpon->oam, true, xpon->epon.llid,
+ 	                         xpon->epon.channel);
+ 	airoha_xpon_set_data_path_link(xpon, true);
+ 	airoha_xpon_leds_update(xpon);
++	dev_dbg(xpon->dev,
++		"EPON registered: epoch=%u llid=0x%04x channel=%u reopen_attempts=%u\n",
++		xpon->epon.registration_epoch, xpon->epon.llid,
++		xpon->epon.channel, xpon->epon.reopen_attempts);
+ 	dev_info(xpon->dev, "EPON LLID0 registered: LLID=0x%04x\n",
+ 	         xpon->epon.llid);
+ }
+@@ -928,6 +1006,24 @@ irqreturn_t airoha_xpon_epon_irq(struct airoha_xpon *xpon)
+ 		airoha_xpon_epon_complete_registration(xpon);
+ 	if (events & AIROHA_EPON_INT_MPCP_TIMEOUT) {
+ 		xpon->epon.mpcp_timeout_count++;
++		/*
++		 * The hardware watchdog fires one second after the last grant the
++		 * MAC accepted. Everything below reads this snapshot to tell a
++		 * slow OLT apart from a MAC that will never be granted again.
++		 */
++		dev_dbg(xpon->dev,
++			"EPON MPCP timeout %u: epoch=%u state=%u llid_valid=%u llid=0x%04x streak=%u unanswered=%u status=0x%08x llid_ctrl=0x%08x int=0x%08x rx_mpcp=%u tx_mpcp=%u\n",
++			xpon->epon.mpcp_timeout_count,
++			xpon->epon.registration_epoch, xpon->epon.mpcp_state,
++			xpon->epon.llid_valid, xpon->epon.llid,
++			xpon->epon.registered_timeout_streak,
++			READ_ONCE(xpon->epon.requests_since_message),
++			airoha_epon_read(xpon,
++			                 AIROHA_EPON_LLID0_DISCOVERY_STATUS),
++			airoha_epon_read(xpon, AIROHA_EPON_LLID_DISCOVERY_CTRL),
++			airoha_epon_read(xpon, AIROHA_EPON_INT_STATUS),
++			airoha_epon_read(xpon, AIROHA_EPON_RX_MPCP_COUNT),
++			airoha_epon_read(xpon, AIROHA_EPON_TX_MPCP_COUNT));
+ 		/*
+ 		 * Timeouts outside the registered state belong to normal discovery
+ 		 * and must not escalate; a registered MAC has a grant every period.
+@@ -941,12 +1037,12 @@ irqreturn_t airoha_xpon_epon_irq(struct airoha_xpon *xpon)
+ 			                     xpon->epon.registered_since) >
+ 			    AIROHA_EPON_TX_WEDGE_EPOCH_MS) {
+ 				xpon->epon.registered_timeout_streak = 0;
+-				xpon->epon.tx_rearm_count = 0;
++				xpon->epon.reopen_attempts = 0;
+ 			}
+ 			xpon->epon.registered_timeout_streak++;
+ 			if (xpon->epon.registered_timeout_streak >=
+ 			    AIROHA_EPON_TX_WEDGE_TIMEOUTS) {
+-				xpon->epon.frontend_reset_pending = true;
++				xpon->epon.reopen_pending = true;
+ 				mod_delayed_work(system_wq, &xpon->link_work, 0);
+ 			}
+ 		} else {
+@@ -956,9 +1052,8 @@ irqreturn_t airoha_xpon_epon_irq(struct airoha_xpon *xpon)
+ 			 * first grants, and the MAC then latches its discovery state
+ 			 * machine: every later Gate is ignored and the 1 s timeout
+ 			 * merely repeats. Silence across several answered Gates is the
+-			 * only evidence the driver has, so escalate the same re-arm
+-			 * ladder a registered wedge uses. Before this, only a line that
+-			 * had already registered could ever recover.
++			 * only evidence the driver has, so escalate the same way a
++			 * registered wedge does.
+ 			 */
+ 			if (xpon->epon.mpcp_state != AIROHA_EPON_MPCP_DENIED &&
+ 			    READ_ONCE(xpon->epon.requests_since_message) >=
+@@ -968,9 +1063,9 @@ irqreturn_t airoha_xpon_epon_irq(struct airoha_xpon *xpon)
+ 
+ 				WRITE_ONCE(xpon->epon.requests_since_message, 0);
+ 				dev_warn(xpon->dev,
+-				         "EPON discovery wedged: %u unanswered Register Requests, no MPCP message from the OLT; re-arming the burst path\n",
++				         "EPON discovery wedged: %u unanswered Register Requests, no MPCP message from the OLT; re-opening the line\n",
+ 				         silent);
+-				xpon->epon.frontend_reset_pending = true;
++				xpon->epon.reopen_pending = true;
+ 				mod_delayed_work(system_wq, &xpon->link_work, 0);
+ 			}
+ 		}
+@@ -979,7 +1074,7 @@ irqreturn_t airoha_xpon_epon_irq(struct airoha_xpon *xpon)
+ 			"EPON MPCP timeout: state=%u llid_valid=%u\n",
+ 			xpon->epon.mpcp_state, xpon->epon.llid_valid);
+ 		airoha_xpon_epon_send_deregister(xpon);
+-		airoha_xpon_epon_reset_registration(xpon);
++		airoha_xpon_epon_reset_registration(xpon, "mpcp-timeout");
+ 	}
+ out_unlock:
+ 	mutex_unlock(&xpon->state_lock);
+@@ -1055,132 +1150,114 @@ irqreturn_t airoha_xpon_epon_phy_irq(struct airoha_xpon *xpon)
+ 	return IRQ_HANDLED;
+ }
+ 
+-int airoha_xpon_epon_recover_tx(struct airoha_xpon *xpon)
+-{
+-	struct airoha_pon_frontend_diagnostics diagnostics = {};
+-	const struct airoha_xpon_mode_info *mode;
+-	bool forced = xpon->epon.frontend_reset_forced ||
+-	              xpon->epon.frontend_reload_forced;
+-	int ret;
+-
+-	if (!xpon->epon.frontend_reset_pending && !forced)
+-		return 0;
++/*
++ * A wedged LLID epoch is only ever cleared by a real close/open of the line.
++ * controller_stop() synchronizes both IRQs before it takes state_lock - it has
++ * to, because the threaded handler takes that lock first - so nothing running
++ * under state_lock can reproduce that sequence without deadlocking. Measured on
++ * this hardware, an in-place reset that keeps the lock (unprepare, discharge,
++ * prepare, start_rx) leaves the line exactly as wedged as it was, while
++ * "ip link set pon0 down/up" recovers it every time.
++ *
++ * link_work therefore only decides that a reopen is due. The reopen worker in
++ * airoha-xpon-main.c owns the actual dev_close()/dev_open() and runs with no
++ * lock held, which is the one place where stopping the line is legal.
++ */
+ 
++/* Called with state_lock held; returns true when the worker has work to do. */
++bool airoha_xpon_epon_request_reopen(struct airoha_xpon *xpon,
++                                     unsigned long *delay)
++{
++	if (!xpon->epon.reopen_pending)
++		return false;
+ 	if (!xpon->tx_armed || !airoha_xpon_mode_is_epon(xpon->active_mode)) {
+-		xpon->epon.frontend_reset_pending = false;
+-		xpon->epon.frontend_reset_forced = false;
+-		return 0;
++		xpon->epon.reopen_pending = false;
++		return false;
+ 	}
+ 
+-	/*
+-	 * Keep the request pending across the cooldown. Consuming it here would
+-	 * silently drop a recovery the timeout path has already asked for.
+-	 */
+-	if (!forced && time_before(jiffies, xpon->epon.frontend_reset_after))
+-		return 0;
+-
+-	xpon->epon.frontend_reset_pending = false;
+-	xpon->epon.frontend_reset_forced = false;
+-
+-	mode = airoha_xpon_mode_info(xpon->active_mode);
+-	if (!mode)
+-		return -EOPNOTSUPP;
+-
+-	/* Best-effort telemetry for the log; providers without it report none. */
+-	airoha_pon_frontend_get_diagnostics(xpon->frontend, &diagnostics);
+-
+-	dev_warn(xpon->dev,
+-	         "EPON burst path wedged: %u registered timeouts, %u unanswered Register Requests (llid=0x%04x state=%u int=0x%08x dsc=0x%08x rx_mpcp=%u rx_oam=%u tx_bias=0x%04x tx_power=0x%04x); recovering the burst path\n",
+-	         xpon->epon.registered_timeout_streak,
+-	         xpon->epon.requests_since_message, xpon->epon.llid,
+-	         xpon->epon.mpcp_state,
+-	         airoha_epon_read(xpon, AIROHA_EPON_INT_STATUS),
+-	         airoha_epon_read(xpon, AIROHA_EPON_LLID_DISCOVERY_CTRL),
+-	         airoha_epon_read(xpon, AIROHA_EPON_RX_MPCP_COUNT),
+-	         airoha_epon_read(xpon, AIROHA_EPON_RX_OAM_COUNT),
+-	         diagnostics.tx_bias, diagnostics.tx_power);
+-
+-	airoha_xpon_epon_stop_rx(xpon);
++	/* Keep the flag set across the cooldown so the request is not dropped. */
++	if (time_before(jiffies, xpon->epon.reopen_after))
++		*delay = xpon->epon.reopen_after - jiffies;
++	else
++		*delay = 0;
++	return true;
++}
+ 
++/*
++ * Called with state_lock held, right before the worker takes the line down:
++ * consumes the request, bumps the attempt counters and decides whether this
++ * cycle also reloads the provider firmware. False means the request went stale
++ * while it waited for rtnl_lock.
++ *
++ * The first attempt must find a line that is up and running EPON. A retry runs
++ * against a line this worker closed itself, so stopping and the active mode are
++ * already clear; reopen_holding is what still proves the line belongs to us.
++ */
++bool airoha_xpon_epon_reopen_begin(struct airoha_xpon *xpon)
++{
++	if (!xpon->epon.reopen_pending)
++		return false;
++
++	if (!xpon->epon.reopen_holding &&
++	    (xpon->stopping || !xpon->active_mode_valid ||
++	     !airoha_xpon_mode_is_epon(xpon->active_mode)))
++		return false;
++
++	xpon->epon.reopen_pending = false;
++	xpon->epon.reopen_holding = true;
++	xpon->epon.reopen_attempts++;
++	xpon->epon.reopen_reload =
++		xpon->epon.reopen_reload ||
++		xpon->epon.reopen_attempts >= AIROHA_XPON_REOPEN_RELOAD_AT;
+ 	/*
+-	 * Stage 1: repeat the gate-off/prepare/gate-on cycle without touching
+-	 * the firmware. Measured on this hardware, that restores a wedged line
+-	 * every time, while reloading the MD32 images brings the line back dark
+-	 * about one attempt in five, so the reload is only the escalation.
+-	 * The frontend re-commits the calibration itself when the chip does not
+-	 * report TX ready afterwards, which covers the same fault one second
+-	 * after the gate opens instead of three MPCP periods later.
++	 * A reopen drops carrier on every upper interface, so back off as soon
++	 * as one cycle has already failed: the userspace watchdog is the outer
++	 * net and does not need the driver to hammer the netdev.
+ 	 */
+-	if (!xpon->epon.frontend_reload_forced &&
+-	    xpon->epon.tx_rearm_count < AIROHA_EPON_TX_REARM_ATTEMPTS) {
+-		xpon->epon.tx_rearm_count++;
+-		ret = airoha_pon_frontend_prepare(xpon->frontend,
+-		                                  mode->frontend_mode);
+-		if (ret) {
+-			dev_err(xpon->dev,
+-			        "re-arming the EPON burst path failed: %d\n",
+-			        ret);
+-			xpon->epon.frontend_reset_after =
+-				jiffies + msecs_to_jiffies(
+-				AIROHA_EPON_TX_REARM_RETRY_MS);
+-			return ret;
+-		}
+-
+-		xpon->epon.registered_timeout_streak = 0;
+-		xpon->epon.requests_since_message = 0;
+-		xpon->epon.frontend_reset_after =
+-			jiffies + msecs_to_jiffies(AIROHA_EPON_TX_REARM_RETRY_MS);
+-
+-		ret = airoha_xpon_epon_start_rx(xpon);
+-		if (ret)
+-			return ret;
++	xpon->epon.reopen_after =
++		jiffies + msecs_to_jiffies(xpon->epon.reopen_attempts == 1 ?
++						   AIROHA_XPON_REOPEN_MIN_MS :
++						   AIROHA_XPON_REOPEN_RETRY_MS);
++	/* This epoch is about to be destroyed; its counters must not carry over. */
++	xpon->epon.registered_timeout_streak = 0;
++	WRITE_ONCE(xpon->epon.requests_since_message, 0);
++	return true;
++}
+ 
+-		dev_info(xpon->dev,
+-		         "EPON burst path re-armed (%u of %u) without reloading the optical firmware\n",
+-		         xpon->epon.tx_rearm_count,
+-		         AIROHA_EPON_TX_REARM_ATTEMPTS);
+-		return 0;
+-	}
++/* Called with state_lock held once the worker has finished. */
++void airoha_xpon_epon_reopen_end(struct airoha_xpon *xpon, bool reloaded,
++                                 int err)
++{
++	if (reloaded)
++		xpon->epon.reopen_reload_count++;
++	xpon->epon.reopen_reload = false;
+ 
+-	/*
+-	 * Stage 2: reload the frontend firmware. Providers without one cannot
+-	 * reload anything, and the PCS restart below is the only recovery they
+-	 * have.
+-	 */
+-	ret = airoha_pon_frontend_reset(xpon->frontend);
+-	if (ret == -EOPNOTSUPP) {
++	if (err) {
++		/*
++		 * The open failed, so the line is still closed and still ours.
++		 * Nothing else is monitoring it now (link_work exits as soon as
++		 * stopping is set), so this function has to own the retry.
++		 */
++		xpon->epon.reopen_pending = true;
++		xpon->epon.reopen_after =
++			jiffies + msecs_to_jiffies(AIROHA_XPON_REOPEN_RETRY_MS);
+ 		dev_warn(xpon->dev,
+-		         "optical frontend cannot reload firmware; restarting the PCS only\n");
+-		ret = 0;
+-	} else if (!ret) {
+-		xpon->epon.frontend_reset_count++;
+-		ret = airoha_pon_frontend_prepare(xpon->frontend,
+-		                                  mode->frontend_mode);
+-	}
+-
+-	if (ret) {
+-		dev_err(xpon->dev, "optical frontend reload failed: %d\n", ret);
+-		xpon->epon.frontend_reset_after =
+-			jiffies + msecs_to_jiffies(AIROHA_EPON_TX_WEDGE_RETRY_MS);
+-		return ret;
++			 "EPON line re-open attempt %u failed: %d; retrying in %u ms\n",
++			 xpon->epon.reopen_attempts, err,
++			 AIROHA_XPON_REOPEN_RETRY_MS);
++		schedule_delayed_work(&xpon->reopen_work,
++		                      msecs_to_jiffies(AIROHA_XPON_REOPEN_RETRY_MS));
++		return;
+ 	}
+ 
+-	xpon->epon.registered_timeout_streak = 0;
+-	xpon->epon.requests_since_message = 0;
+-	xpon->epon.tx_rearm_count = 0;
+-	xpon->epon.frontend_reload_forced = false;
+-	xpon->epon.frontend_reset_after =
+-		jiffies + msecs_to_jiffies(AIROHA_EPON_TX_WEDGE_RETRY_MS);
+-
+-	ret = airoha_xpon_epon_start_rx(xpon);
+-	if (ret)
+-		return ret;
+-
+-	/* PCS sync restarts the MAC epoch; advance() re-arms the burst gate. */
++	/* The line is back under the netdev stack; link_work resumes from there. */
++	xpon->epon.reopen_holding = false;
++	xpon->epon.reopen_count++;
+ 	dev_info(xpon->dev,
+-	         "optical frontend reloaded (%u), restarting EPON line sync\n",
+-	         xpon->epon.frontend_reset_count);
+-	return 0;
++		 "EPON line re-opened after %u attempt%s (%u with a firmware reload); waiting for the OLT\n",
++		 xpon->epon.reopen_attempts,
++		 xpon->epon.reopen_attempts == 1 ? "" : "s",
++		 xpon->epon.reopen_reload_count);
+ }
+ 
+ int airoha_xpon_epon_advance(struct airoha_xpon *xpon, u32 phy_events,
+@@ -1196,7 +1273,7 @@ int airoha_xpon_epon_advance(struct airoha_xpon *xpon, u32 phy_events,
+ 			return 0;
+ 		dev_info(xpon->dev,
+ 		         "EPON registration deny interval expired\n");
+-		airoha_xpon_epon_reset_registration(xpon);
++		airoha_xpon_epon_reset_registration(xpon, "deny-expired");
+ 	}
+ 
+ 	if (synced) {
+@@ -1235,6 +1312,10 @@ int airoha_xpon_epon_advance(struct airoha_xpon *xpon, u32 phy_events,
+ 	airoha_xpon_epon_stop_rx(xpon);
+ 	xpon->epon.recovery_count++;
+ 	full_reinit = xpon->epon.recovery_count % 5 == 0;
++	dev_dbg(xpon->dev,
++		"EPON PMA retrain: recovery=%u full=%u epoch=%u phy_events=0x%08x\n",
++		xpon->epon.recovery_count, full_reinit,
++		xpon->epon.registration_epoch, phy_events);
+ 	if (full_reinit) {
+ 		xpon->pcs_profile_valid = false;
+ 		xpon->epon.full_reinit_count++;
+diff --git a/airoha-xpon/src/airoha-xpon-epon.h b/airoha-xpon/src/airoha-xpon-epon.h
+index 48bf280..8af00b0 100644
+--- a/airoha-xpon/src/airoha-xpon-epon.h
++++ b/airoha-xpon/src/airoha-xpon-epon.h
+@@ -20,7 +20,11 @@ void airoha_xpon_epon_debug_pcs(struct airoha_xpon *xpon, struct seq_file *m);
+ void airoha_xpon_epon_debug_mac(struct airoha_xpon *xpon, struct seq_file *m);
+ int airoha_xpon_epon_advance(struct airoha_xpon *xpon, u32 phy_events,
+                              unsigned long *delay);
+-int airoha_xpon_epon_recover_tx(struct airoha_xpon *xpon);
++bool airoha_xpon_epon_request_reopen(struct airoha_xpon *xpon,
++                                     unsigned long *delay);
++bool airoha_xpon_epon_reopen_begin(struct airoha_xpon *xpon);
++void airoha_xpon_epon_reopen_end(struct airoha_xpon *xpon, bool reloaded,
++                                 int err);
+ irqreturn_t airoha_xpon_epon_irq_fast(struct airoha_xpon *xpon);
+ irqreturn_t airoha_xpon_epon_irq(struct airoha_xpon *xpon);
+ irqreturn_t airoha_xpon_epon_phy_irq(struct airoha_xpon *xpon);
+diff --git a/airoha-xpon/src/airoha-xpon-main.c b/airoha-xpon/src/airoha-xpon-main.c
+index f42644d..dc233da 100644
+--- a/airoha-xpon/src/airoha-xpon-main.c
++++ b/airoha-xpon/src/airoha-xpon-main.c
+@@ -3,6 +3,7 @@
+ #include <airoha-pon-frontend.h>
+ #include <linux/airoha-eth.h>
+ #include <linux/atomic.h>
++#include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+@@ -26,6 +27,16 @@
+ #include "airoha-xpon-omci.h"
+ #include "airoha-xpon-xgpon.h"
+ 
++/*
++ * Closing and opening the line is disruptive to netifd and its upper
++ * interfaces, so it is switchable: a deployment that watches the line itself
++ * can turn the automatic cycle off and keep the debugfs trigger.
++ */
++static bool auto_reopen = true;
++module_param_named(auto_reopen, auto_reopen, bool, 0644);
++MODULE_PARM_DESC(auto_reopen,
++		 "Close and re-open the PON line when an EPON LLID epoch wedges");
++
+ void airoha_xpon_set_data_path_link(struct airoha_xpon *xpon, bool ready)
+ {
+ 	/*
+@@ -33,6 +44,9 @@ void airoha_xpon_set_data_path_link(struct airoha_xpon *xpon, bool ready)
+ 	 * queue readiness together after GEM/T-CONT or LLID/channel metadata is
+ 	 * installed, so VLAN upper devices observe a complete path.
+ 	 */
++	dev_dbg(xpon->dev, "%s carrier %s (epoch=%u state=%u)\n",
++		xpon->pon_netdev->name, ready ? "on" : "off",
++		xpon->epon.registration_epoch, xpon->epon.mpcp_state);
+ 	if (ready) {
+ 		netif_carrier_on(xpon->pon_netdev);
+ 		netif_tx_wake_all_queues(xpon->pon_netdev);
+@@ -156,6 +170,8 @@ static void airoha_xpon_start_work(struct work_struct *work)
+ 		goto out_unlock;
+ 
+ 	xpon->last_start_error = 0;
++	dev_dbg(xpon->dev, "PON line start: mode=%s lifecycle=%u\n",
++		airoha_xpon_mode_name(xpon->active_mode), xpon->lifecycle);
+ 	ret = airoha_xpon_prepare_frontend_locked(xpon);
+ 	if (ret) {
+ 		xpon->last_start_error = ret;
+@@ -174,6 +190,9 @@ static void airoha_xpon_start_work(struct work_struct *work)
+ 			        ret);
+ 		} else if (!xpon->stopping) {
+ 			start_monitor = true;
++			dev_dbg(xpon->dev,
++				"PON line start complete: lifecycle=%u rx_active=%u\n",
++				xpon->lifecycle, xpon->rx_active);
+ 		}
+ 	}
+ 
+@@ -194,6 +213,9 @@ static int airoha_xpon_controller_start(void *priv)
+ 	 */
+ 	mutex_lock(&xpon->state_lock);
+ 	if (xpon->lifecycle != AIROHA_XPON_STOPPED) {
++		dev_dbg(xpon->dev,
++			"PON line open refused: lifecycle=%u is not stopped\n",
++			xpon->lifecycle);
+ 		ret = -EBUSY;
+ 		goto out_unlock;
+ 	}
+@@ -205,9 +227,16 @@ static int airoha_xpon_controller_start(void *priv)
+ 		xpon->last_start_error = ret;
+ 		goto out_unlock;
+ 	}
++	dev_dbg(xpon->dev, "PON line open: mode=%s\n", mode->name);
+ 	xpon->stopping = false;
+ 	xpon->active_mode = xpon->configured_mode;
+ 	xpon->active_mode_valid = true;
++	/*
++	 * The line is up again whoever asked for it, so any queued recovery is
++	 * satisfied and the reopen worker no longer owes this line an open.
++	 */
++	xpon->epon.reopen_pending = false;
++	xpon->epon.reopen_holding = false;
+ 	xpon->identity.active_identity = xpon->identity.pending_identity;
+ 	xpon->last_start_error = 0;
+ 	atomic_set(&xpon->phy_events, 0);
+@@ -232,6 +261,17 @@ static void airoha_xpon_controller_stop(void *priv)
+ 	bool epon = READ_ONCE(xpon->active_mode_valid) &&
+ 	            airoha_xpon_mode_is_epon(READ_ONCE(xpon->active_mode));
+ 
++	/*
++	 * Both IRQ synchronizations below need the handlers to be able to run, and
++	 * the threaded handler takes state_lock first. Nothing may call this with
++	 * state_lock already held, which is exactly why the recovery path in
++	 * link_work cannot do it and has to hand the close/open to the reopen
++	 * worker.
++	 */
++	dev_dbg(xpon->dev,
++		"PON line stop: lifecycle=%u rx_active=%u mac_initialized=%u epon=%u\n",
++		xpon->lifecycle, xpon->rx_active, xpon->mac_initialized, epon);
++
+ 	/* The stopping gate closes asynchronous entry and upstream bursts. */
+ 	WRITE_ONCE(xpon->stopping, true);
+ 	atomic_set(&xpon->mac_restart_pending, 0);
+@@ -278,6 +318,7 @@ static void airoha_xpon_controller_stop(void *priv)
+ 	xpon->lifecycle = AIROHA_XPON_STOPPED;
+ 	xpon->active_mode_valid = false;
+ 	airoha_xpon_leds_update(xpon);
++	dev_dbg(xpon->dev, "PON line stopped: lifecycle=%u\n", xpon->lifecycle);
+ 	mutex_unlock(&xpon->state_lock);
+ }
+ 
+@@ -407,14 +448,151 @@ static void airoha_xpon_advance_rx_locked(struct airoha_xpon *xpon,
+ 	}
+ }
+ 
++/*
++ * Clear a wedged EPON LLID epoch by closing and opening the line, which is what
++ * "ip link set <dev> down; sleep 1; up" does by hand and the only recovery
++ * measured to work on this hardware.
++ *
++ * This cannot happen in link_work: controller_stop() calls synchronize_irq()
++ * before it takes state_lock, while the threaded IRQ handler owns state_lock
++ * first, so a caller that already holds the lock would deadlock. This worker
++ * therefore owns no lock the teardown needs, which makes it the only legal
++ * place for the cycle. It also reproduces the userspace sequence exactly,
++ * including the port teardown that airoha_eth does around ndo_stop/ndo_open.
++ *
++ * Between dev_close() and dev_open() the line is down and controller_stop() has
++ * cleared stopping and the active mode, so reopen_holding is the only thing that
++ * distinguishes our own closed line from one netifd took down. It also keeps the
++ * retry path alive after a failed open, which link_work can no longer drive
++ * because it exits as soon as stopping is set.
++ */
++static void airoha_xpon_reopen_work(struct work_struct *work)
++{
++	struct airoha_xpon *xpon = container_of(to_delayed_work(work),
++	                                        struct airoha_xpon, reopen_work);
++	struct net_device *netdev = xpon->pon_netdev;
++	unsigned int attempt;
++	bool reload;
++	bool held;
++	int ret;
++
++	/* rtnl_lock() is the outer lock of ndo_open/ndo_stop; take it first. */
++	rtnl_lock();
++	if (READ_ONCE(xpon->removing)) {
++		rtnl_unlock();
++		return;
++	}
++
++	mutex_lock(&xpon->state_lock);
++	held = xpon->epon.reopen_holding;
++	mutex_unlock(&xpon->state_lock);
++
++	/*
++	 * Down and not held means netifd wants the line down; overriding that is
++	 * not the driver's business. Down and held is the retry path: the line is
++	 * closed because this worker closed it and still owes it an open.
++	 */
++	if (!netif_running(netdev) && !held) {
++		mutex_lock(&xpon->state_lock);
++		xpon->epon.reopen_pending = false;
++		mutex_unlock(&xpon->state_lock);
++		dev_dbg(xpon->dev,
++			"EPON line re-open skipped: %s is administratively down\n",
++			netdev->name);
++		rtnl_unlock();
++		return;
++	}
++
++	if (netif_running(netdev) && held) {
++		/*
++		 * netifd opened the line this worker had closed. The epoch is
++		 * already fresh, so closing it again would only add a flap.
++		 */
++		mutex_lock(&xpon->state_lock);
++		xpon->epon.reopen_pending = false;
++		airoha_xpon_epon_reopen_end(xpon, false, 0);
++		attempt = xpon->epon.reopen_attempts;
++		mutex_unlock(&xpon->state_lock);
++		dev_dbg(xpon->dev,
++			"EPON line re-open attempt %u: %s is already up again\n",
++			attempt, netdev->name);
++		rtnl_unlock();
++		return;
++	}
++
++	mutex_lock(&xpon->state_lock);
++	ret = airoha_xpon_epon_reopen_begin(xpon) ? 0 : -EALREADY;
++	reload = xpon->epon.reopen_reload;
++	attempt = xpon->epon.reopen_attempts;
++	mutex_unlock(&xpon->state_lock);
++
++	if (ret) {
++		/* Taken down, mode cleared or already recovered while queued. */
++		rtnl_unlock();
++		return;
++	}
++
++	if (netif_running(netdev)) {
++		dev_warn(xpon->dev,
++			 "EPON line wedged: closing %s to restart the LLID epoch (attempt %u)\n",
++			 netdev->name, attempt);
++		dev_close(netdev);
++	} else {
++		/* Retry: the line stayed closed from the previous attempt. */
++		dev_warn(xpon->dev,
++			 "EPON line re-open attempt %u: opening %s again\n",
++			 attempt, netdev->name);
++	}
++	rtnl_unlock();
++
++	/* Let the optics discharge and the OLT age out the previous LLID. */
++	msleep(AIROHA_XPON_REOPEN_DISCHARGE_MS);
++
++	if (reload) {
++		/*
++		 * Plain cycles did not hold, so also reload the provider firmware.
++		 * The line is down here, which is the only state in which the
++		 * provider can be reset without racing controller_start().
++		 */
++		dev_warn(xpon->dev,
++			 "EPON line re-open attempt %u: reloading the optical frontend firmware\n",
++			 attempt);
++		ret = airoha_pon_frontend_reset(xpon->frontend);
++		if (ret == -EOPNOTSUPP)
++			dev_dbg(xpon->dev,
++				"optical frontend cannot reload firmware; continuing with the line re-open only\n");
++		else if (ret)
++			dev_warn(xpon->dev,
++				 "optical frontend reload failed: %d; opening the line anyway\n",
++				 ret);
++		/* Only a reload that actually ran counts as one. */
++		reload = !ret;
++	}
++
++	rtnl_lock();
++	if (READ_ONCE(xpon->removing)) {
++		/* Removal owns the line now; leave it closed and stay silent. */
++		rtnl_unlock();
++		return;
++	}
++	/* No extack: this open is driver-initiated, not a netlink request. */
++	ret = dev_open(netdev, NULL);
++	rtnl_unlock();
++
++	mutex_lock(&xpon->state_lock);
++	airoha_xpon_epon_reopen_end(xpon, reload, ret);
++	mutex_unlock(&xpon->state_lock);
++}
++
+ static void airoha_xpon_link_work(struct work_struct *work)
+ {
+ 	struct airoha_xpon *xpon = container_of(to_delayed_work(work),
+ 	                                        struct airoha_xpon, link_work);
+ 	struct airoha_pon_frontend_signal_status optical = {};
+ 	unsigned long delay = msecs_to_jiffies(AIROHA_XPON_LINK_POLL_MS);
++	unsigned long reopen_delay = 0;
+ 	u32 phy_events = atomic_xchg(&xpon->phy_events, 0);
+-	bool requeue;
++	bool requeue, reopen = false;
+ 	int ret;
+ 
+ 	/* Provider sampling may sleep and runs outside state_lock. */
+@@ -445,13 +623,40 @@ static void airoha_xpon_link_work(struct work_struct *work)
+ 	airoha_xpon_leds_update(xpon);
+ 
+ 	/*
+-	 * An armed EPON MAC that keeps missing grants has a wedged burst path:
+-	 * the optics answers on I2C while the fibre carries no light. Reloading
+-	 * the provider firmware from link_work restarts the line itself.
++	 * A gate that stays dark cannot be fixed by another Register Request: the
++	 * analog path only settles after a full frontend re-prepare, which is what
++	 * the reopen does. Ask for it directly rather than waiting for three
++	 * short-lived registrations to prove the same thing.
+ 	 */
+-	if (airoha_xpon_mode_is_epon(xpon->active_mode) &&
+-	    airoha_xpon_epon_recover_tx(xpon))
+-		goto out_requeue;
++	if (airoha_xpon_mode_is_epon(xpon->active_mode) && xpon->optical_signal &&
++	    xpon->tx_armed && READ_ONCE(auto_reopen)) {
++		if (airoha_pon_frontend_tx_ready(xpon->frontend)) {
++			xpon->epon.tx_dark_since = 0;
++		} else if (!xpon->epon.tx_dark_since) {
++			xpon->epon.tx_dark_since = jiffies;
++		} else if (time_after(jiffies, xpon->epon.tx_dark_since +
++		                               msecs_to_jiffies(
++		                                       AIROHA_XPON_TX_DARK_MS))) {
++			dev_warn(xpon->dev,
++			         "EPON burst gate dark for %u ms; restarting the LLID epoch\n",
++			         AIROHA_XPON_TX_DARK_MS);
++			xpon->epon.reopen_pending = true;
++			xpon->epon.tx_dark_since = 0;
++		}
++	} else {
++		xpon->epon.tx_dark_since = 0;
++	}
++
++	/*
++	 * A wedged LLID epoch is only cleared by a real close/open of the line,
++	 * which cannot run under state_lock. Ask the reopen worker for one and
++	 * keep monitoring: the reopen restarts the epoch this loop follows.
++	 * A dark line is left to the LOS handling below, which has nothing to do
++	 * with the reference clock the OLT stopped granting.
++	 */
++	if (airoha_xpon_mode_is_epon(xpon->active_mode) && xpon->optical_signal &&
++	    READ_ONCE(auto_reopen))
++		reopen = airoha_xpon_epon_request_reopen(xpon, &reopen_delay);
+ 
+ 	/* IRQ queues Deactivate; link_work commits the plain MAC reset under state_lock. */
+ 	if (!airoha_xpon_mode_is_epon(xpon->active_mode)) {
+@@ -473,6 +678,12 @@ static void airoha_xpon_link_work(struct work_struct *work)
+ 	mutex_unlock(&xpon->state_lock);
+ 	if (requeue)
+ 		schedule_delayed_work(&xpon->link_work, delay);
++	/*
++	 * Scheduling outside state_lock keeps the worker from blocking on the lock
++	 * this function still holds; a delay above zero is the reopen backoff.
++	 */
++	if (reopen)
++		schedule_delayed_work(&xpon->reopen_work, reopen_delay);
+ 	return;
+ 
+ out_no_requeue:
+@@ -593,6 +804,7 @@ static int airoha_xpon_probe(struct platform_device *pdev)
+ 	INIT_LIST_HEAD(&xpon->netlink_node);
+ 	INIT_WORK(&xpon->start_work, airoha_xpon_start_work);
+ 	INIT_DELAYED_WORK(&xpon->link_work, airoha_xpon_link_work);
++	INIT_DELAYED_WORK(&xpon->reopen_work, airoha_xpon_reopen_work);
+ 	atomic_set(&xpon->phy_events, 0);
+ 	atomic_set(&xpon->mac_restart_pending, 0);
+ 	atomic_set(&xpon->tx_resync_pending, 0);
+@@ -746,9 +958,20 @@ static void airoha_xpon_remove(struct platform_device *pdev)
+ {
+ 	struct airoha_xpon *xpon = platform_get_drvdata(pdev);
+ 
+-	/* Stop drains work and closes BEN before devm releases IRQ/MMIO. */
++	/* Drop the user-facing triggers first so nothing new can be queued. */
+ 	airoha_xpon_debugfs_remove(xpon);
+ 	airoha_xpon_netlink_unregister(xpon);
++
++	/*
++	 * Drain the reopen worker before the controller and netdev go away, and
++	 * flag it first so a cycle that is already past its checks stays down
++	 * instead of re-opening a line that is being removed. This runs without
++	 * rtnl, so the worker can always finish its own rtnl_lock() section.
++	 */
++	WRITE_ONCE(xpon->removing, true);
++	cancel_delayed_work_sync(&xpon->reopen_work);
++
++	/* Stop drains work and closes BEN before devm releases IRQ/MMIO. */
+ 	airoha_eth_pon_unregister_controller(xpon->pon_netdev, xpon);
+ 	airoha_xpon_controller_stop(xpon);
+ }
+diff --git a/airoha-xpon/src/airoha-xpon-oam.c b/airoha-xpon/src/airoha-xpon-oam.c
+index cf9926a..e78583f 100644
+--- a/airoha-xpon/src/airoha-xpon-oam.c
++++ b/airoha-xpon/src/airoha-xpon-oam.c
+@@ -150,6 +150,10 @@ void airoha_xpon_oam_set_link(struct airoha_xpon_oam *oam, bool ready, u16 llid,
+ 		context |= AIROHA_OAM_CTX_READY;
+ 	WRITE_ONCE(oam->tx_context, context);
+ 
++	/* The OAM channel follows the LLID epoch; log every transition. */
++	netdev_dbg(oam->netdev, "%s: llid=0x%04x channel=%u context=0x%08x\n",
++		   ready ? "ready" : "not ready", llid, channel, context);
++
+ 	if (!ready) {
+ 		netif_carrier_off(oam->netdev);
+ 		netif_tx_disable(oam->netdev);
+diff --git a/airoha-xpon/src/airoha-xpon-private.h b/airoha-xpon/src/airoha-xpon-private.h
+index d2bf22a..979ea35 100644
+--- a/airoha-xpon/src/airoha-xpon-private.h
++++ b/airoha-xpon/src/airoha-xpon-private.h
+@@ -103,22 +103,32 @@ struct airoha_xpon_epon {
+ 	unsigned int sync_loss_count;
+ 	unsigned int recovery_count;
+ 	unsigned int full_reinit_count;
++	unsigned int registered_timeout_streak;
+ 	/*
+-	 * Set by the MPCP timeout path when a registered MAC stops reaching the
+-	 * OLT. link_work consumes it and reloads the optical frontend.
++	 * Set by the MPCP timeout path when the LLID epoch stops being granted.
++	 * link_work only raises the flag; the reopen worker performs the
++	 * close/open outside state_lock, see airoha_xpon_epon_reopen_begin().
+ 	 */
+-	bool frontend_reset_pending;
+-	bool frontend_reset_forced;
+-	bool frontend_reload_forced;
+-	unsigned int registered_timeout_streak;
++	bool reopen_pending;
+ 	/*
+-	 * Gate re-arms already spent on this wedge. Re-arming is repeated before
+-	 * the firmware reload because the reload is the step that can come back
+-	 * dark on this hardware.
++	 * The reopen worker closed this line itself and still owes it a
++	 * dev_open(). controller_stop() clears stopping and the active mode, so
++	 * without this flag a retry after a failed open could not tell our own
++	 * closed line apart from one netifd took down.
+ 	 */
+-	unsigned int tx_rearm_count;
+-	unsigned int frontend_reset_count;
+-	unsigned long frontend_reset_after;
++	bool reopen_holding;
++	/* This reopen also reloads the provider firmware before the next open. */
++	bool reopen_reload;
++	/* Re-opens already spent on the current wedge. */
++	unsigned int reopen_attempts;
++	unsigned int reopen_count;
++	unsigned int reopen_reload_count;
++	/* Earliest time the next reopen may start; owned by the reopen worker. */
++	unsigned long reopen_after;
++	/* When the burst gate started reading not-ready; see AIROHA_XPON_TX_DARK_MS. */
++	unsigned long tx_dark_since;
++	/* Bumped by reset_registration() so log lines tie back to one epoch. */
++	unsigned int registration_epoch;
+ 	unsigned long registered_since;
+ 	unsigned long last_registration_lifetime;
+ 	unsigned int mac_error_count;
+@@ -277,6 +287,8 @@ struct airoha_xpon {
+ 	struct mutex ploam_lock;
+ 	struct work_struct start_work;
+ 	struct delayed_work link_work;
++	/* Runs the line close/open that no state_lock holder can perform. */
++	struct delayed_work reopen_work;
+ 	struct list_head netlink_node;
+ 	enum airoha_xpon_mode configured_mode;
+ 	enum airoha_xpon_mode active_mode;
+@@ -308,6 +320,8 @@ struct airoha_xpon {
+ 	bool service_ready;
+ 	bool stopping;
+ 	bool active_mode_valid;
++	/* Set once remove() starts so queued recovery cannot resurrect the line. */
++	bool removing;
+ };
+ 
+ /*
+@@ -316,6 +330,9 @@ struct airoha_xpon {
+  * command port. Nested acquisition follows state_lock -> ploam_lock.
+  * IRQ publishes events atomically for link_work to consume under state_lock.
+  * stopping closes asynchronous entry before IRQ and work synchronization.
++ * The reopen worker is the only context that may run a line close/open, and
++ * it holds no lock the teardown needs; where it does nest, it follows
++ * rtnl_lock -> state_lock, the order ndo_open/ndo_stop already use.
+  */
+ 
+ #define AIROHA_XGPON_PLOAMD_MAX_DRAIN    20
+@@ -328,6 +345,35 @@ struct airoha_xpon {
+  * Every fifth recovery from attempt 2 also resets SCU; others reset PMA.
+  */
+ #define AIROHA_XPON_FULL_REINIT_PERIOD 5
++/*
++ * A close/open of the line netdev is the only sequence measured to clear a
++ * wedged EPON LLID epoch: it is the one action that runs controller_stop()
++ * outside state_lock, and controller_stop() has to synchronize both IRQs
++ * before it can take that lock. The worker holds the line down for this long
++ * so the optics discharge and the OLT ages out the previous LLID.
++ */
++#define AIROHA_XPON_REOPEN_DISCHARGE_MS 1000
++/* Floor between two cycles, so an unrecoverable line cannot spin the netdev. */
++#define AIROHA_XPON_REOPEN_MIN_MS       5000
++/* Backoff once the wedge survives a cycle: a reopen is disruptive to netifd. */
++#define AIROHA_XPON_REOPEN_RETRY_MS     30000
++/*
++ * Plain cycles that failed to hold. The next reopen also reloads the provider
++ * firmware, which is the step that can bring a wedged EN7572 back dark.
++ */
++#define AIROHA_XPON_REOPEN_RELOAD_AT    3
++/*
++ * A burst gate that never lights cannot be fixed by another Register Request:
++ * on this hardware the analog path only settles after a full frontend
++ * re-prepare, which is what the reopen does. Waiting for three short-lived
++ * registrations to prove that costs about seven seconds of cold start, so ask
++ * for the reopen once the gate has been dark this long.
++ *
++ * Measured here: a gate that does light reports ready 3.7 s after it opened, so
++ * anything still dark at 5 s is a warm-up that failed rather than one still in
++ * progress. Every second beyond that is a second of dead cold start.
++ */
++#define AIROHA_XPON_TX_DARK_MS          5000
+ 
+ static inline u32 airoha_xgpon_read(struct airoha_xpon *xpon, u32 reg)
+ {

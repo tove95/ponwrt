@@ -25,11 +25,18 @@ Every release automatically compiles and packages **both devices** into separate
 - **Automated Factory EEPROM Extraction**: Integrated `/etc/hotplug.d/firmware/10-mt7916-an-eeprom` and `/etc/init.d/mt7916-an-eeprom` (executed at `START=08` prior to driver probing). Extracts the 4KB calibration block from UBI `factory` offset `0x1000` and validates the `0x7916` magic bytes.
 - **Preinit Wireless MAC Calculation**: Embedded `/lib/preinit/07_an7581_bsp_wifi_mac` automatically reads the base MAC and assigns 2.4G (`base + 6`) and 5G (`base + 7`) hardware addresses.
 - **RF Power Tables**: Integrated `SingleSKU` and `mt7916-sku.dat` beamforming data.
+- **Async Wi-Fi Scan Protection**: Integrated `rpcd` async scanning patch (`133-rpcd-async-scan.patch`), decoupling wireless discovery from the main event loop to prevent LuCI Web UI stalls or 504 timeouts during channel surveys.
 
-### 2. Full-Stack Airoha AN7581 Native PON Drivers
+### 2. Full-Stack Airoha AN7581 Native PON Drivers & OLT Hardening
 - Integrated `kmod-airoha-xpon`, `kmod-airoha-en7572` (BOSA), `kmod-phy-airoha-en8811h` (2.5G PHY), and `airoha-en7581-npu-firmware` (NPU hardware offload).
 - Integrated `airoha-pond`, `airoha-ponctl`, and `luci-app-pon`.
 - Supports GPON / XG-PON / XGS-PON **O5 operational state** registration and verification, with full configuration of Vendor ID (e.g., `FHTT`), Equipment ID (e.g., `HS8145X6 (PON ONT)`), PON SN, LOID, password, cloned MAC, and BOSA calibration volume preservation.
+- **EN7572 Cold-Start Laser Latch Stabilization**: Integrated 8-consecutive-sample confirmation (140ms settling window) to prevent premature `SYS_TX_READY` reports before the laser stabilizes, eliminating cold-start registration drops.
+- **Enhanced OLT (Huawei/ZTE) Troubleshooting & Compatibility**:
+  - **Configurable LOID Padding Alignment**: Web UI support for Left vs Right 0x00 padding in the 24-byte LOID field, fixing `reason=0x01` authentication rejects on specific Huawei OLTs;
+  - **Live Wire Bytes Inspection**: Real-time hex and printable ASCII display of raw frame attributes (`CTC ONU SN` and `LOID sent in authentication`) directly in LuCI Status;
+  - **Web-based PON MAC Override**: Instant PON interface MAC cloning from the web management interface.
+- **Clean Network Generation**: Prevents redundant `wan6` DHCPv6 interface creation on DHCP networks to avoid dual-stack route competition.
 - Live telemetry for Rx/Tx optical power, operating voltage, and SoC temperature.
 
 ### 3. Airoha 8-Core NPU / PPE Hardware Flow Offloading (Fastpath)
@@ -300,8 +307,10 @@ Outputs are generated under `bin/targets/airoha/an7581/`.
 - **[ImmortalWrt](https://github.com/immortalwrt/immortalwrt)**: Highly optimized upstream distribution.
 - **[pbs05/ponwrt](https://github.com/pbs05/ponwrt)**: Foundational Airoha AN7581/AN7583 PonWrt source tree.
 - **QWRT Team**: Insights on SafeXcel EIP-93 crypto, PPE flow offloading, and NPU WED Wi-Fi acceleration.
+- **[NNdroid](https://github.com/NNdroid)**: For EN7572 laser latch stabilization, LOID padding alignment, and CTC raw wire byte inspection tools.
 - **[Kahen/PonWrt-CI-UBI](https://github.com/Kahen/PonWrt-CI-UBI)**: Precise SoC thermal telemetry (`temperature-rpc.uc`) and MTD read-write protection (`kmod-mtd-rw`).
-- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**: Line-rate PPPoE & XG-PON offload practices.
+- **[LeoooChen/PonWRT-TYFZA1](https://github.com/LeoooChen/PonWRT-TYFZA1)**: Line-rate PPPoE & XG-PON offload practices and `rpcd` async Wi-Fi scanning.
+- **[oenhu](https://github.com/oenhu)**: For PR #116 preventing redundant DHCPv6 `wan6` interfaces on DHCP networks.
 - **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**: Next-generation proxy engine.
 - **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**: Streamlined sing-box WebUI and transparent gateway integration.
 - **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**: Airoha AN7581 8-core NPU & PPE telemetry dashboard.

@@ -1,0 +1,1206 @@
+From f01d709f743c44db96fdb5d73a613c63a88c539b Mon Sep 17 00:00:00 2001
+From: NNdroid <99177648+NNdroid@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 13:28:21 +0800
+Subject: [PATCH] pon: local ONU identity tooling and a one-shot line re-open
+
+Collapse the fork-only commits on top of pbs05/openwrt-pon-userspace into a single delta. Only the fork delta changes: the resulting tree is identical to the pre-squash tip, and the intermediate revert pair that cancelled itself out is gone.
+
+- luci-app-pon: report the CTC ONU serial number and the LOID bytes actually sent on the wire, expose the LOID padding on either side of the field, and allow the PON MAC to be overridden.
+- airoha-pon-daemons: thread those identity overrides through the OAM and OMCI configuration and fill the 24-byte LOID field through one helper so the reported and transmitted bytes cannot disagree.
+- airoha-ponctl: add /etc/init.d/pon-reopen, a one-shot service that re-opens the line once after boot when the EPON front end comes up dark.
+---
+ airoha-pon-daemons/Makefile                   |   2 +-
+ airoha-pon-daemons/src/src/config.rs          |  72 ++++++++++
+ airoha-pon-daemons/src/src/oam/config.rs      |  34 +++--
+ airoha-pon-daemons/src/src/oam/control.rs     | 110 ++++++++++++++-
+ airoha-pon-daemons/src/src/oam/ctc.rs         |  57 ++++++--
+ airoha-pon-daemons/src/src/oam/mod.rs         |   2 +
+ airoha-pon-daemons/src/src/omci/config.rs     |  29 +++-
+ airoha-pon-daemons/src/src/omci/mib.rs        |   5 +-
+ airoha-ponctl/Makefile                        |   5 +-
+ airoha-ponctl/files/pon-reopen                | 127 ++++++++++++++++++
+ airoha-ponctl/files/pon-reopen.init           |  18 +++
+ airoha-ponctl/files/pon.config                |  11 ++
+ airoha-ponctl/files/pon.init                  |  23 +++-
+ luci-app-pon/Makefile                         |   2 +-
+ .../luci-static/resources/view/pon/config.js  | 120 ++++++++++++++++-
+ .../luci-static/resources/view/pon/status.js  |  23 +++-
+ luci-app-pon/po/zh_Hans/pon.po                |  57 ++++++++
+ 17 files changed, 659 insertions(+), 38 deletions(-)
+ create mode 100644 airoha-ponctl/files/pon-reopen
+ create mode 100644 airoha-ponctl/files/pon-reopen.init
+
+diff --git a/airoha-pon-daemons/Makefile b/airoha-pon-daemons/Makefile
+index 0f7104e..0b84ba7 100644
+--- a/airoha-pon-daemons/Makefile
++++ b/airoha-pon-daemons/Makefile
+@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=airoha-pon-daemons
+ PKG_VERSION:=0.3.0
+-PKG_RELEASE:=2
++PKG_RELEASE:=3
+ PKG_URL:=https://github.com/pbs05/openwrt-pon-userspace/tree/main/airoha-pon-daemons
+ 
+ PKG_LICENSE:=GPL-2.0-only
+diff --git a/airoha-pon-daemons/src/src/config.rs b/airoha-pon-daemons/src/src/config.rs
+index 2e8758e..c166a76 100644
+--- a/airoha-pon-daemons/src/src/config.rs
++++ b/airoha-pon-daemons/src/src/config.rs
+@@ -18,6 +18,44 @@ impl Section {
+     }
+ }
+ 
++/// Where the 0x00 fill goes when a LOID is shorter than its wire field.
++///
++/// The CTC LOID field is 24 bytes and deployments disagree about the side that
++/// carries the padding: some OLTs match the string at the end of the field
++/// (leading fill, right aligned) and some at the start (trailing fill, left
++/// aligned). The two protocol paths historically differed, so each config
++/// keeps its own default.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum LoidPadding {
++    /// Fill before the LOID, right aligning it in the field.
++    Leading,
++    /// Fill after the LOID, left aligning it in the field.
++    Trailing,
++}
++
++impl LoidPadding {
++    /// Unknown values keep the caller's default so a typo cannot break a line.
++    pub fn from_option(value: Option<&str>, default: Self) -> Self {
++        match value {
++            Some("leading") => Self::Leading,
++            Some("trailing") => Self::Trailing,
++            _ => default,
++        }
++    }
++}
++
++pub fn loid_field(value: &[u8], width: usize, padding: LoidPadding) -> Vec<u8> {
++    let mut output = vec![0; width];
++    let copied = value.len().min(width);
++
++    match padding {
++        LoidPadding::Leading => output[width - copied..].copy_from_slice(&value[..copied]),
++        LoidPadding::Trailing => output[..copied].copy_from_slice(&value[..copied]),
++    }
++
++    output
++}
++
+ #[derive(Clone, Debug)]
+ pub struct PonConfig {
+     sections: Vec<Section>,
+@@ -169,6 +207,40 @@ fn split_uci_line(line: &str) -> Result<Vec<String>, &'static str> {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn loid_padding_places_the_fill_on_the_configured_side() {
++        assert_eq!(
++            loid_field(b"myloid", 8, LoidPadding::Leading),
++            b"\0\0myloid"
++        );
++        assert_eq!(
++            loid_field(b"myloid", 8, LoidPadding::Trailing),
++            b"myloid\0\0"
++        );
++    }
++
++    #[test]
++    fn loid_padding_truncates_and_keeps_the_empty_field_zeroed() {
++        assert_eq!(loid_field(&[b'A'; 24], 4, LoidPadding::Trailing), b"AAAA");
++        assert_eq!(loid_field(b"", 24, LoidPadding::Leading), vec![0; 24]);
++    }
++
++    #[test]
++    fn unknown_loid_padding_keeps_the_callers_default() {
++        assert_eq!(
++            LoidPadding::from_option(Some("leading"), LoidPadding::Trailing),
++            LoidPadding::Leading
++        );
++        assert_eq!(
++            LoidPadding::from_option(Some("typo"), LoidPadding::Trailing),
++            LoidPadding::Trailing
++        );
++        assert_eq!(
++            LoidPadding::from_option(None, LoidPadding::Leading),
++            LoidPadding::Leading
++        );
++    }
++
+     #[test]
+     fn parses_named_sections_and_quoted_values() {
+         let config = PonConfig::parse(
+diff --git a/airoha-pon-daemons/src/src/oam/config.rs b/airoha-pon-daemons/src/src/oam/config.rs
+index 04a4c0b..20ae15c 100644
+--- a/airoha-pon-daemons/src/src/oam/config.rs
++++ b/airoha-pon-daemons/src/src/oam/config.rs
+@@ -2,7 +2,7 @@
+ 
+ use std::io;
+ 
+-use crate::config::Section;
++use crate::config::{LoidPadding, Section};
+ 
+ #[derive(Clone, Debug)]
+ pub struct OamConfig {
+@@ -18,6 +18,8 @@ pub struct OamConfig {
+     pub chipset_id: [u8; 8],
+     pub loid: Vec<u8>,
+     pub loid_password: Vec<u8>,
++    /// CTC AUTH_RESPONSE has always right aligned the LOID; keep that default.
++    pub loid_padding: LoidPadding,
+     pub ge_ports: u8,
+ }
+ 
+@@ -36,6 +38,7 @@ impl Default for OamConfig {
+             chipset_id: [0x00, 0x00, 0x75, 0x81, 0x00, 0x00, 0x00, 0x00],
+             loid: Vec::new(),
+             loid_password: Vec::new(),
++            loid_padding: LoidPadding::Leading,
+             ge_ports: 1,
+         }
+     }
+@@ -84,6 +87,8 @@ impl OamConfig {
+                 io::Error::new(io::ErrorKind::InvalidData, "ge_ports must be an integer")
+             })?;
+         }
++        config.loid_padding =
++            LoidPadding::from_option(section.option("loid_padding"), config.loid_padding);
+ 
+         config.validate()?;
+         Ok(config)
+@@ -117,13 +122,6 @@ pub fn fixed_width(value: &[u8], width: usize) -> Vec<u8> {
+     output
+ }
+ 
+-pub fn fixed_width_right(value: &[u8], width: usize) -> Vec<u8> {
+-    let mut output = vec![0; width];
+-    let copied = value.len().min(width);
+-    output[width - copied..].copy_from_slice(&value[..copied]);
+-    output
+-}
+-
+ fn string_value(value: &[u8], key: &str) -> io::Result<String> {
+     String::from_utf8(value.to_vec()).map_err(|_| {
+         io::Error::new(
+@@ -199,6 +197,26 @@ mod tests {
+         assert!(parse_hex_array::<8>(b"01f2cce4010c06zz", "chipset_id").is_err());
+     }
+ 
++    #[test]
++    fn loid_padding_defaults_to_the_historical_alignment() {
++        let config = PonConfig::parse(
++            "config oam 'line0_oam'\n\
++             \toption line 'line0'\n",
++        )
++        .unwrap();
++        let oam = OamConfig::from_section(config.linked_section("oam", "line0").unwrap()).unwrap();
++        assert_eq!(oam.loid_padding, crate::config::LoidPadding::Leading);
++
++        let config = PonConfig::parse(
++            "config oam 'line0_oam'\n\
++             \toption line 'line0'\n\
++             \toption loid_padding 'trailing'\n",
++        )
++        .unwrap();
++        let oam = OamConfig::from_section(config.linked_section("oam", "line0").unwrap()).unwrap();
++        assert_eq!(oam.loid_padding, crate::config::LoidPadding::Trailing);
++    }
++
+     #[test]
+     fn empty_uci_values_keep_protocol_defaults() {
+         let config = PonConfig::parse(
+diff --git a/airoha-pon-daemons/src/src/oam/control.rs b/airoha-pon-daemons/src/src/oam/control.rs
+index 3cbb2bd..bc1b6ba 100644
+--- a/airoha-pon-daemons/src/src/oam/control.rs
++++ b/airoha-pon-daemons/src/src/oam/control.rs
+@@ -8,7 +8,9 @@ use std::path::Path;
+ use std::sync::{Arc, Mutex};
+ use std::time::{SystemTime, UNIX_EPOCH};
+ 
+-use super::ctc::Snapshot;
++use super::config::{fixed_width, OamConfig};
++use super::ctc::{hex_bytes, onu_sn, Snapshot};
++use crate::config::loid_field;
+ 
+ const CONTROL_PROTOCOL_VERSION: u8 = 1;
+ const EVENT_CAPACITY: usize = 256;
+@@ -26,6 +28,8 @@ struct Inner {
+     interface: String,
+     operator: String,
+     loid_configured: bool,
++    oam_config: OamConfig,
++    source_mac: [u8; 6],
+     ieee_operational: bool,
+     rx_messages: u64,
+     tx_messages: u64,
+@@ -45,12 +49,21 @@ pub struct StatusHub {
+ }
+ 
+ impl StatusHub {
+-    pub fn new(interface: &str, operator: &str, loid_configured: bool, ctc: Snapshot) -> Self {
++    pub fn new(
++        interface: &str,
++        operator: &str,
++        loid_configured: bool,
++        ctc: Snapshot,
++        oam_config: OamConfig,
++        source_mac: [u8; 6],
++    ) -> Self {
+         let hub = Self {
+             shared: Arc::new(Mutex::new(Inner {
+                 interface: interface.to_owned(),
+                 operator: operator.to_owned(),
+                 loid_configured,
++                oam_config,
++                source_mac,
+                 ieee_operational: false,
+                 rx_messages: 0,
+                 tx_messages: 0,
+@@ -199,6 +212,66 @@ fn status_json(inner: &Inner) -> String {
+         .map(u16::to_string)
+         .collect::<Vec<_>>()
+         .join(",");
++    /* Report the exact bytes the CTC agent puts on the wire, not the raw UCI
++     * values: the ONU SN is assembled from several fields plus the parent MAC,
++     * and the LOID is right-aligned into a 24-byte authentication field. */
++    let onu_sn_hex = hex_bytes(&onu_sn(
++        &inner.oam_config,
++        inner.source_mac,
++        inner.ctc.selected_version,
++    ));
++    let loid_sent_hex = hex_bytes(&loid_field(
++        &inner.oam_config.loid,
++        24,
++        inner.oam_config.loid_padding,
++    ));
++    let source_mac = inner
++        .source_mac
++        .iter()
++        .map(|byte| format!("{byte:02x}"))
++        .collect::<Vec<_>>()
++        .join(":");
++
++    /* Publish each configured identity field with the bytes the CTC agent
++     * really returns, so LuCI can show the zero padding and the fields that
++     * the negotiated CTC version skips without duplicating that logic. */
++    let config = &inner.oam_config;
++    let ctc_active = inner.operator == "ctc";
++    let ctc_v3 = ctc_active && inner.ctc.selected_version.unwrap_or(0) >= 0x30;
++    let firmware: Vec<u8> = config.firmware_version.iter().copied().take(127).collect();
++    let chipset_text = hex_bytes(&config.chipset_id);
++    let ports = config.ge_ports.to_string();
++    let onu_identity = format!(
++        concat!(
++            "{{\"vendor_id\":{},\"model\":{},\"equipment_id\":{},",
++            "\"hardware_version\":{},\"software_version\":{},",
++            "\"firmware_version\":{},\"chipset_id\":{},\"ge_ports\":{}}}"
++        ),
++        identity_field_json(
++            &config.vendor_id,
++            &fixed_width(&config.vendor_id, 4),
++            ctc_active
++        ),
++        identity_field_json(&config.model, &fixed_width(&config.model, 4), ctc_active),
++        identity_field_json(
++            &config.equipment_id,
++            &fixed_width(&config.equipment_id, 16),
++            ctc_v3,
++        ),
++        identity_field_json(
++            &config.hardware_version,
++            &fixed_width(&config.hardware_version, 8),
++            ctc_active,
++        ),
++        identity_field_json(
++            &config.software_version,
++            &fixed_width(&config.software_version, 16),
++            ctc_active,
++        ),
++        identity_field_json(&firmware, &firmware, ctc_active),
++        identity_field_json(chipset_text.as_bytes(), &config.chipset_id, ctc_active),
++        identity_field_json(ports.as_bytes(), &[config.ge_ports], ctc_active),
++    );
+ 
+     format!(
+         concat!(
+@@ -208,6 +281,7 @@ fn status_json(inner: &Inner) -> String {
+             "\"tx_messages\":{},\"parse_errors\":{},\"information_rx\":{},",
+             "\"event_rx\":{},\"organization_rx\":{},\"last_code\":{},",
+             "\"ctc_discovery_state\":{},\"ctc_version\":{},",
++            "\"source_mac\":{},\"onu_identity\":{},\"onu_sn\":{},\"loid_sent\":{},",
+             "\"authentication_status\":{},\"authentication_failure\":{},",
+             "\"ctc_get_requests\":{},\"ctc_set_requests\":{},",
+             "\"ctc_unsupported_requests\":{},\"vlan_object\":{},\"vlan_mode\":{},",
+@@ -228,6 +302,10 @@ fn status_json(inner: &Inner) -> String {
+         last_code,
+         json_string(inner.ctc.discovery_state),
+         selected_version,
++        json_string(&source_mac),
++        onu_identity,
++        json_string(&onu_sn_hex),
++        json_string(&loid_sent_hex),
+         json_string(inner.ctc.authentication),
+         authentication_failure,
+         inner.ctc.get_requests,
+@@ -240,6 +318,17 @@ fn status_json(inner: &Inner) -> String {
+     )
+ }
+ 
++fn identity_field_json(text: &[u8], wire: &[u8], sent: bool) -> String {
++    let text = String::from_utf8_lossy(text);
++
++    format!(
++        "{{\"text\":{},\"wire\":{},\"sent\":{}}}",
++        json_string(&text),
++        json_string(&hex_bytes(wire)),
++        sent
++    )
++}
++
+ fn event_json(event: &Event) -> String {
+     format!(
+         "{{\"sequence\":{},\"timestamp_ms\":{},\"kind\":{},\"message\":{}}}",
+@@ -288,3 +377,20 @@ fn now_ms() -> u128 {
+         .unwrap_or_default()
+         .as_millis()
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn identity_field_json_reports_wire_bytes_and_sent_flag() {
++        assert_eq!(
++            identity_field_json(b"AN7581", b"AN7581\0\0", true),
++            "{\"text\":\"AN7581\",\"wire\":\"414e3738310000\",\"sent\":true}"
++        );
++        assert_eq!(
++            identity_field_json(b"", &[0; 4], false),
++            "{\"text\":\"\",\"wire\":\"00000000\",\"sent\":false}"
++        );
++    }
++}
+diff --git a/airoha-pon-daemons/src/src/oam/ctc.rs b/airoha-pon-daemons/src/src/oam/ctc.rs
+index b029304..cb213bb 100644
+--- a/airoha-pon-daemons/src/src/oam/ctc.rs
++++ b/airoha-pon-daemons/src/src/oam/ctc.rs
+@@ -2,7 +2,8 @@
+ 
+ use std::collections::BTreeSet;
+ 
+-use super::config::{fixed_width, fixed_width_right, OamConfig};
++use super::config::{fixed_width, OamConfig};
++use crate::config::loid_field;
+ use crate::wire::{Reader, Writer};
+ 
+ const INFO_TYPE_ORGANIZATION_SPECIFIC: u8 = 0xfe;
+@@ -40,6 +41,22 @@ const SET_OK: u8 = 0x80;
+ const BAD_PARAMETERS: u8 = 0x86;
+ const NO_RESOURCE: u8 = 0x87;
+ 
++/// Exact bytes returned to the OLT for the CTC ONU SN attribute (0xC7/0x0001).
++/// The Get Response and the control status share this function, so the LuCI
++/// page reports the value really put on the wire: zero padding, the parent
++/// interface MAC, and the CTC 3.0 extension decided at runtime.
++pub fn onu_sn(config: &OamConfig, source_mac: [u8; 6], selected_version: Option<u8>) -> Vec<u8> {
++    let mut value = fixed_width(&config.vendor_id, 4);
++    value.extend_from_slice(&fixed_width(&config.model, 4));
++    value.extend_from_slice(&source_mac);
++    value.extend_from_slice(&fixed_width(&config.hardware_version, 8));
++    value.extend_from_slice(&fixed_width(&config.software_version, 16));
++    if selected_version.unwrap_or(0) >= 0x30 {
++        value.extend_from_slice(&fixed_width(&config.equipment_id, 16));
++    }
++    value
++}
++
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ enum DiscoveryState {
+     PassiveWait,
+@@ -285,8 +302,9 @@ impl CtcSession {
+                 if auth_type == AUTH_TYPE_LOID_PASSWORD {
+                     response.be16(0x0025);
+                     response.u8(AUTH_TYPE_LOID_PASSWORD);
+-                    // CTC stores the LOID right-aligned in a 24-byte field.
+-                    response.bytes(&fixed_width_right(&config.loid, 24));
++                    // CTC stores the LOID in a 24-byte field; the configured
++                    // padding selects the side that carries the 0x00 fill.
++                    response.bytes(&loid_field(&config.loid, 24, config.loid_padding));
+                     response.bytes(&fixed_width(&config.loid_password, 12));
+                 } else {
+                     response.be16(2);
+@@ -469,15 +487,7 @@ impl CtcSession {
+ 
+         match leaf {
+             LEAF_ONU_SN if object.is_none() => {
+-                let mut value = fixed_width(&config.vendor_id, 4);
+-                value.extend_from_slice(&fixed_width(&config.model, 4));
+-                value.extend_from_slice(&source_mac);
+-                value.extend_from_slice(&fixed_width(&config.hardware_version, 8));
+-                value.extend_from_slice(&fixed_width(&config.software_version, 16));
+-                if self.selected_version.unwrap_or(0) >= 0x30 {
+-                    value.extend_from_slice(&fixed_width(&config.equipment_id, 16));
+-                }
+-                Ok(value)
++                Ok(onu_sn(config, source_mac, self.selected_version))
+             }
+             LEAF_FIRMWARE_VERSION if object.is_none() => {
+                 Ok(config.firmware_version.iter().copied().take(127).collect())
+@@ -635,7 +645,7 @@ fn format_variable_event(
+     )
+ }
+ 
+-fn hex_bytes(value: &[u8]) -> String {
++pub(crate) fn hex_bytes(value: &[u8]) -> String {
+     use std::fmt::Write as _;
+ 
+     let mut output = String::with_capacity(value.len() * 2);
+@@ -716,4 +726,25 @@ mod tests {
+         );
+         assert_eq!(session.unsupported_requests, 1);
+     }
++
++    #[test]
++    fn onu_sn_matches_the_bytes_sent_for_the_ctc_attribute() {
++        let config = OamConfig::default();
++        let mac = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
++
++        let v21 = onu_sn(&config, mac, Some(0x21));
++        assert_eq!(v21.len(), 38);
++        assert_eq!(&v21[..4], b"OWRT");
++        assert_eq!(&v21[4..8], b"AN75");
++        assert_eq!(&v21[8..14], &mac[..]);
++        assert_eq!(&v21[14..22], b"AN7581\0\0");
++        assert_eq!(&v21[22..38], b"OpenWrt\0\0\0\0\0\0\0\0\0");
++        assert_eq!(hex_bytes(&v21).len(), 76);
++
++        let v30 = onu_sn(&config, mac, Some(0x30));
++        assert_eq!(v30.len(), 54);
++        assert_eq!(&v30[38..54], b"AN75\0\0\0\0\0\0\0\0\0\0\0\0");
++
++        assert_eq!(onu_sn(&config, mac, None), v21);
++    }
+ }
+diff --git a/airoha-pon-daemons/src/src/oam/mod.rs b/airoha-pon-daemons/src/src/oam/mod.rs
+index aa7dfd6..f47b9a1 100644
+--- a/airoha-pon-daemons/src/src/oam/mod.rs
++++ b/airoha-pon-daemons/src/src/oam/mod.rs
+@@ -40,6 +40,8 @@ pub fn run_agent(interface: &str, config: OamConfig, control_socket: &Path) -> i
+         &config.operator,
+         !config.loid.is_empty(),
+         ctc.snapshot(),
++        config.clone(),
++        source_mac,
+     );
+     let _control_server = start_server(control_socket, status.clone())?;
+     let mut receive_buffer = [0u8; RECEIVE_BUFFER_LEN];
+diff --git a/airoha-pon-daemons/src/src/omci/config.rs b/airoha-pon-daemons/src/src/omci/config.rs
+index 28c9f8c..cfd72a1 100644
+--- a/airoha-pon-daemons/src/src/omci/config.rs
++++ b/airoha-pon-daemons/src/src/omci/config.rs
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ 
+-use crate::config::Section;
++use crate::config::{LoidPadding, Section};
+ 
+ #[derive(Clone, Debug)]
+ pub struct IdentityConfig {
+@@ -14,6 +14,8 @@ pub struct IdentityConfig {
+     pub software_version: Vec<u8>,
+     pub loid: Vec<u8>,
+     pub loid_password: Vec<u8>,
++    /// The OMCI LOID attributes have always been left aligned; keep that default.
++    pub loid_padding: LoidPadding,
+     pub operator_id: Vec<u8>,
+     pub serial_number: Vec<u8>,
+ }
+@@ -30,6 +32,7 @@ impl Default for IdentityConfig {
+             software_version: b"OpenWrt".to_vec(),
+             loid: Vec::new(),
+             loid_password: Vec::new(),
++            loid_padding: LoidPadding::Trailing,
+             operator_id: b"CTC".to_vec(),
+             serial_number: Vec::new(),
+         }
+@@ -71,6 +74,8 @@ impl IdentityConfig {
+                 *destination = value.as_bytes().to_vec();
+             }
+         }
++        config.loid_padding =
++            LoidPadding::from_option(section.option("loid_padding"), config.loid_padding);
+ 
+         config
+     }
+@@ -164,6 +169,28 @@ mod tests {
+         assert!(identity.loid.is_empty());
+     }
+ 
++    #[test]
++    fn loid_padding_defaults_to_the_historical_alignment() {
++        let config = PonConfig::parse(
++            "config omci 'line0_omci'\n\
++             \toption line 'line0'\n",
++        )
++        .unwrap();
++        let identity =
++            IdentityConfig::from_section(config.linked_section("omci", "line0").unwrap());
++        assert_eq!(identity.loid_padding, crate::config::LoidPadding::Trailing);
++
++        let config = PonConfig::parse(
++            "config omci 'line0_omci'\n\
++             \toption line 'line0'\n\
++             \toption loid_padding 'leading'\n",
++        )
++        .unwrap();
++        let identity =
++            IdentityConfig::from_section(config.linked_section("omci", "line0").unwrap());
++        assert_eq!(identity.loid_padding, crate::config::LoidPadding::Leading);
++    }
++
+     #[test]
+     fn compatibility_options_select_the_omcc_profile() {
+         let config = PonConfig::parse(
+diff --git a/airoha-pon-daemons/src/src/omci/mib.rs b/airoha-pon-daemons/src/src/omci/mib.rs
+index 56e3c6c..e40d272 100644
+--- a/airoha-pon-daemons/src/src/omci/mib.rs
++++ b/airoha-pon-daemons/src/src/omci/mib.rs
+@@ -17,6 +17,7 @@ use super::provisioning::{
+ };
+ use super::schema::{self, AttributeAccess, AttributeKind, CreateSource, ManagedEntityOrigin};
+ use super::security;
++use crate::config::loid_field;
+ 
+ #[allow(unused_imports)]
+ pub use super::schema::{
+@@ -308,7 +309,7 @@ impl Mib {
+             .read_write(7, vec![0])
+             .read_only(8, vec![0])
+             .read_only(9, vec![0])
+-            .read_only(10, fixed_width(&identity.loid, 24))
++            .read_only(10, loid_field(&identity.loid, 24, identity.loid_padding))
+             .read_only(11, fixed_width(&identity.loid_password, 12))
+             .read_write(12, vec![0])
+             .read_only(13, vec![0]);
+@@ -377,7 +378,7 @@ impl Mib {
+ 
+         let ctc_auth = ManagedEntity::default()
+             .read_only(1, fixed_width(&identity.operator_id, 4))
+-            .read_only(2, fixed_width(&identity.loid, 24))
++            .read_only(2, loid_field(&identity.loid, 24, identity.loid_padding))
+             .read_only(3, fixed_width(&identity.loid_password, 12))
+             .read_write(4, vec![0]);
+         mib.insert(CLASS_CTC_LOID_AUTH, 0, ctc_auth);
+diff --git a/airoha-ponctl/Makefile b/airoha-ponctl/Makefile
+index e973ee9..5d73e17 100644
+--- a/airoha-ponctl/Makefile
++++ b/airoha-ponctl/Makefile
+@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=airoha-ponctl
+ PKG_VERSION:=0.2.0
+-PKG_RELEASE:=1
++PKG_RELEASE:=2
+ PKG_URL:=https://github.com/pbs05/openwrt-pon-userspace/tree/main/airoha-ponctl
+ 
+ PKG_LICENSE:=GPL-2.0-only
+@@ -44,6 +44,9 @@ define Package/airoha-ponctl/install
+ 	chmod 0600 $(1)/etc/config/pon
+ 	$(INSTALL_DIR) $(1)/etc/init.d
+ 	$(INSTALL_BIN) ./files/pon.init $(1)/etc/init.d/pon
++	$(INSTALL_BIN) ./files/pon-reopen.init $(1)/etc/init.d/pon-reopen
++	$(INSTALL_DIR) $(1)/usr/libexec
++	$(INSTALL_BIN) ./files/pon-reopen $(1)/usr/libexec/pon-reopen
+ endef
+ 
+ $(eval $(call RustBinPackage,airoha-ponctl))
+diff --git a/airoha-ponctl/files/pon-reopen b/airoha-ponctl/files/pon-reopen
+new file mode 100644
+index 0000000..5d26aa6
+--- /dev/null
++++ b/airoha-ponctl/files/pon-reopen
+@@ -0,0 +1,127 @@
++#!/bin/sh
++# SPDX-License-Identifier: GPL-2.0-only
++
++# The first ndo_open() of a PON line after boot can leave the EPON MAC in an
++# LLID epoch that the OLT never grants upstream slots for: the line registers,
++# misses every grant one second later, and then loops forever. Measured on
++# this hardware, the driver's own recovery ladder cannot repair that state
++# even though it power-cycles the optics and resets the MAC - controller_stop()
++# performs synchronize_irq() before taking state_lock, which is impossible
++# from inside link_work(), so the ladder never reproduces a real close/open.
++#
++# A plain interface down/up does reproduce it, so re-open the line once after
++# the first open whenever the carrier keeps flapping. The carrier follows the
++# LLID registration: it goes up when the driver reports a registered line and
++# drops on the next MPCP timeout, so a wedged line flaps every few seconds
++# while a healthy one holds it.
++
++. /lib/functions.sh
++
++LOG_TAG=pon-reopen
++SETTLE_SECONDS=3
++CARRIER_WAIT_SECONDS=30
++VERIFY_SECONDS=12
++MAX_ATTEMPTS=2
++
++log() {
++	logger -t "$LOG_TAG" "$*"
++}
++
++# Returns 0 only if the carrier still reads 1 on every sample.
++carrier_stable() {
++	local device="$1"
++	local index=0
++
++	while [ "$index" -lt "$VERIFY_SECONDS" ]; do
++		[ "$(cat "/sys/class/net/$device/carrier" 2>/dev/null)" = "1" ] ||
++			return 1
++		sleep 1
++		index=$((index + 1))
++	done
++
++	return 0
++}
++
++# Waits for the first LLID registration, which is what raises the carrier.
++wait_for_carrier() {
++	local device="$1"
++	local deadline=$(( $(date +%s) + CARRIER_WAIT_SECONDS ))
++
++	while [ "$(date +%s)" -lt "$deadline" ]; do
++		[ "$(cat "/sys/class/net/$device/carrier" 2>/dev/null)" = "1" ] &&
++			return 0
++		sleep 1
++	done
++
++	return 1
++}
++
++wait_for_line_up() {
++	local device="$1"
++	local deadline=$(( $(date +%s) + 90 ))
++	local flags
++
++	while [ "$(date +%s)" -lt "$deadline" ]; do
++		flags=$(cat "/sys/class/net/$device/flags" 2>/dev/null)
++		# A line netifd keeps administratively down is not ours to raise.
++		if [ -n "$flags" ] && [ $((flags & 1)) -eq 1 ]; then
++			return 0
++		fi
++		sleep 1
++	done
++
++	return 1
++}
++
++reopen_line() {
++	local device="$1"
++
++	ip link set dev "$device" down || return 1
++	sleep 1
++	ip link set dev "$device" up || return 1
++}
++
++reopen_section() {
++	local section="$1"
++	local device enabled attempt=0
++
++	config_get device "$section" device
++	config_get_bool enabled "$section" reopen_on_boot 1
++
++	[ -n "$device" ] || return 0
++	[ "$enabled" -eq 1 ] || {
++		log "$device: boot re-open is disabled"
++		return 0
++	}
++	wait_for_line_up "$device" || {
++		log "$device: never came up, leaving it alone"
++		return 0
++	}
++
++	sleep "$SETTLE_SECONDS"
++	wait_for_carrier "$device"
++	if carrier_stable "$device"; then
++		log "$device: carrier is stable, leaving the first open alone"
++		return 0
++	fi
++
++	while [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
++		attempt=$((attempt + 1))
++		log "$device: carrier is flapping, re-opening the line (attempt $attempt)"
++		reopen_line "$device" || log "$device: re-opening the line failed"
++		wait_for_carrier "$device"
++		if carrier_stable "$device"; then
++			log "$device: line is stable after re-opening"
++			return 0
++		fi
++	done
++
++	log "$device: line still flapping after $MAX_ATTEMPTS re-opens"
++}
++
++main() {
++	config_load pon
++	config_foreach reopen_section xpon
++}
++
++main "$@"
+diff --git a/airoha-ponctl/files/pon-reopen.init b/airoha-ponctl/files/pon-reopen.init
+new file mode 100644
+index 0000000..dc6fcfd
+--- /dev/null
++++ b/airoha-ponctl/files/pon-reopen.init
+@@ -0,0 +1,18 @@
++#!/bin/sh /etc/rc.common
++# SPDX-License-Identifier: GPL-2.0-only
++
++# Runs after network (START=20) and the OAM/OMCI agent (START=19), so the line
++# has already been opened once by netifd. See /usr/libexec/pon-reopen for why
++# that first open sometimes needs to be repeated.
++
++START=95
++STOP=05
++USE_PROCD=1
++
++start_service() {
++	procd_open_instance
++	procd_set_param command /usr/libexec/pon-reopen
++	procd_set_param stdout 1
++	procd_set_param stderr 1
++	procd_close_instance
++}
+diff --git a/airoha-ponctl/files/pon.config b/airoha-ponctl/files/pon.config
+index 7d4af05..c224209 100644
+--- a/airoha-ponctl/files/pon.config
++++ b/airoha-ponctl/files/pon.config
+@@ -1,10 +1,15 @@
+ config xpon 'line0'
+ 	option device 'pon0'
+ 	option mode ''
++	# Colon-separated unicast MAC; empty leaves the interface MAC untouched.
++	option macaddr ''
+ 	# Accepts 16 raw hex digits or VEND followed by 8 hex digits.
+ 	option serial_number ''
+ 	# Accepts text:VALUE or hex: followed by 72 hex digits.
+ 	option registration_id ''
++	# Re-open the line once after boot when it never stops flapping: the first
++	# open can leave the EPON MAC in an LLID epoch the OLT never grants.
++	option reopen_on_boot '1'
+ 
+ config omci 'line0_omci'
+ 	option line 'line0'
+@@ -18,6 +23,9 @@ config omci 'line0_omci'
+ 	option software_version ''
+ 	option operator_id ''
+ 	option loid ''
++	# 0x00 fill side of the 24-byte LOID field: leading (right aligned) or
++	# trailing (left aligned).
++	option loid_padding 'trailing'
+ 	option loid_password ''
+ 
+ config oam 'line0_oam'
+@@ -37,5 +45,8 @@ config oam 'line0_oam'
+ 	# 8-byte wire-order value encoded as 16 hex digits.
+ 	option chipset_id ''
+ 	option loid ''
++	# 0x00 fill side of the 24-byte LOID field: leading (right aligned) or
++	# trailing (left aligned).
++	option loid_padding 'leading'
+ 	option loid_password ''
+ 	option ge_ports '1'
+diff --git a/airoha-ponctl/files/pon.init b/airoha-ponctl/files/pon.init
+index 7d3b176..9131de4 100755
+--- a/airoha-ponctl/files/pon.init
++++ b/airoha-ponctl/files/pon.init
+@@ -6,17 +6,38 @@ USE_PROCD=1
+ 
+ apply_line() {
+ 	local section="$1"
+-	local device mode serial registration
++	local device mode serial registration macaddr current wanted state
+ 
+ 	config_get device "$section" device
+ 	config_get mode "$section" mode
+ 	config_get serial "$section" serial_number
+ 	config_get registration "$section" registration_id
++	config_get macaddr "$section" macaddr
+ 
+ 	[ -n "$device" ] || {
+ 		echo "xpon section '$section' has no device" >&2
+ 		return 1
+ 	}
++
++	# start_mac() latches dev_addr into the EPON address table on ndo_open,
++	# so a MAC change only reaches the wire on the next line down/up cycle.
++	# restart_pon() downs the line before restarting this service. Every UCI
++	# save reloads this service, so skip an already applied MAC: setting the
++	# address on a running line is otherwise rejected as busy and logged.
++	if [ -n "$macaddr" ]; then
++		current=$(cat "/sys/class/net/$device/address" 2>/dev/null | tr 'A-F' 'a-f')
++		wanted=$(printf '%s' "$macaddr" | tr 'A-F' 'a-f')
++		if [ "$current" = "$wanted" ]; then
++			:
++		elif ip link set dev "$device" address "$macaddr"; then
++			state=$(cat "/sys/class/net/$device/operstate" 2>/dev/null)
++			[ "$state" = "down" ] || logger -t pon \
++				"$device: MAC changed while the line is up; restart the PON line to use it"
++		else
++			logger -t pon "$device: could not apply the configured MAC '$macaddr'"
++		fi
++	fi
++
+ 	[ -n "$serial" ] || serial=default
+ 	[ -n "$registration" ] || registration=default
+ 
+diff --git a/luci-app-pon/Makefile b/luci-app-pon/Makefile
+index 832ae3d..1ca7e5d 100644
+--- a/luci-app-pon/Makefile
++++ b/luci-app-pon/Makefile
+@@ -7,7 +7,7 @@ LUCI_URL:=https://github.com/pbs05/openwrt-pon-userspace/tree/main/luci-app-pon
+ LUCI_DEPENDS:=+luci-base +airoha-ponctl +airoha-pond \
+ 	+mtd +ubi-utils +nand-utils +jshn +jsonfilter
+ PKG_VERSION:=0.1.0
+-PKG_RELEASE:=3
++PKG_RELEASE:=4
+ 
+ PKG_LICENSE:=Apache-2.0 GPL-2.0-only
+ 
+diff --git a/luci-app-pon/htdocs/luci-static/resources/view/pon/config.js b/luci-app-pon/htdocs/luci-static/resources/view/pon/config.js
+index b5ab038..3424bb5 100644
+--- a/luci-app-pon/htdocs/luci-static/resources/view/pon/config.js
++++ b/luci-app-pon/htdocs/luci-static/resources/view/pon/config.js
+@@ -43,6 +43,24 @@ function validateSerialNumber(sectionId, value) {
+ 	return _('Use 16 hexadecimal digits or VEND followed by 8 hexadecimal digits.');
+ }
+ 
++function validateMacAddress(sectionId, value) {
++	var first;
++
++	if (value == null || value === '')
++		return true;
++
++	if (!/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(value))
++		return _('Use six colon-separated hexadecimal bytes, e.g. 00:11:22:33:44:55.');
++
++	first = parseInt(value.slice(0, 2), 16);
++	if (first & 1)
++		return _('The PON MAC address must be a unicast address.');
++	if (/^00:00:00:00:00:00$/i.test(value))
++		return _('The PON MAC address must not be all zeros.');
++
++	return true;
++}
++
+ function validateChipsetId(sectionId, value) {
+ 	if (value == null || value === '' || /^[0-9a-fA-F]{16}$/.test(value))
+ 		return true;
+@@ -85,13 +103,63 @@ function parseStorageList(output) {
+ 	});
+ }
+ 
++function printableWire(hex) {
++	return (String(hex || '').match(/../g) || []).map(function(pair) {
++		var code = parseInt(pair, 16);
++		return (code >= 0x20 && code <= 0x7e) ? String.fromCharCode(code) : '';
++	}).join('');
++}
++
++function spacedWire(hex) {
++	return (String(hex || '').match(/../g) || []).join(' ');
++}
++
++function applyActualValue(o, field, note) {
++	if (!field) {
++		o.description = _('The running OAM agent does not report the current value.');
++		return;
++	}
++
++	if (field.text)
++		o.placeholder = _('Currently: %s').format(field.text);
++
++	o.description = field.sent ?
++		_('Actually sent: %s').format(spacedWire(field.wire)) :
++		_('Not sent with the current OAM profile or CTC version.');
++
++	if (note)
++		o.description += ' ' + note;
++}
++
+ return view.extend({
+ 	load: function() {
+-		return fs.exec('/usr/libexec/airoha-pon-data', [ 'list' ]).then(function(result) {
+-			if (result.code != 0)
+-				throw new Error(result.stderr || result.stdout || _('Unable to list storage.'));
+-
+-			return parseStorageList(result.stdout);
++		return Promise.all([
++			fs.exec('/usr/libexec/airoha-pon-data', [ 'list' ]).then(function(result) {
++				if (result.code != 0)
++					throw new Error(result.stderr || result.stdout || _('Unable to list storage.'));
++
++				return parseStorageList(result.stdout);
++			}),
++			uci.load('pon').then(function() {
++				var sections = uci.sections('pon', 'oam');
++
++				if (!sections.length || !sections[0].line)
++					return null;
++				return L.resolveDefault(fs.exec_direct('/usr/bin/pondctl',
++					[ 'status', '--line', sections[0].line ]), null);
++			}).catch(function() {
++				return null;
++			}).then(function(output) {
++				if (!output)
++					return null;
++				try {
++					return JSON.parse(output);
++				} catch (error) {
++					return null;
++				}
++			})
++		]).then(function(results) {
++			return { storages: results[0], oam: results[1] };
+ 		});
+ 	},
+ 
+@@ -118,8 +186,12 @@ return view.extend({
+ 		});
+ 	},
+ 
+-	render: function(storages) {
+-		var m, s, o, selector;
++	render: function(data) {
++		var m, s, o, selector, storages, oam, identity;
++
++		storages = data.storages;
++		oam = data.oam;
++		identity = oam ? oam.onu_identity : null;
+ 
+ 		m = new form.Map('pon', _('PON'),
+ 			_('Project source:') +
+@@ -149,6 +221,7 @@ return view.extend({
+ 		o.depends('mode', '');
+ 		o.depends('mode', 'xgpon');
+ 		o.depends('mode', 'xgspon');
++		o.description = _('Used only by XG-PON and XGS-PON PLOAM registration; EPON registers with the PON MAC address.');
+ 
+ 		o = s.option(form.Value, 'registration_id', _('Registration-ID'));
+ 		o.password = true;
+@@ -159,6 +232,12 @@ return view.extend({
+ 		o.validate = asciiLength(1, 36);
+ 		o.description = _('Optional; sent as all zeros when empty.');
+ 
++		o = s.option(form.Value, 'macaddr', _('PON MAC address'));
++		o.placeholder = _('Board MAC address');
++		o.rmempty = true;
++		o.validate = validateMacAddress;
++		o.description = _('Overrides the PON interface MAC used for EPON registration and the CTC ONU SN. Takes effect after a PON restart. Clearing it restores the factory MAC only after a reboot.');
++
+ 		s = m.section(form.TypedSection, 'omci', _('OMCI settings'));
+ 		s.anonymous = false;
+ 		s.addremove = false;
+@@ -179,6 +258,12 @@ return view.extend({
+ 		o.rmempty = true;
+ 		o.validate = asciiLength(1, 24);
+ 
++		o = s.taboption('authentication', form.ListValue, 'loid_padding', _('LOID padding'));
++		o.default = 'trailing';
++		o.value('leading', _('Before the LOID (right aligned)'));
++		o.value('trailing', _('After the LOID (left aligned)'));
++		o.description = _('Which side of the 24-byte LOID field carries the 0x00 fill.');
++
+ 		o = s.taboption('authentication', form.Value, 'loid_password', _('LOID password'));
+ 		o.password = true;
+ 		o.rmempty = true;
+@@ -246,6 +331,18 @@ return view.extend({
+ 		o.rmempty = true;
+ 		o.depends('operator', 'ctc');
+ 		o.validate = asciiLength(1, 24);
++		applyActualValue(o, oam && typeof oam.loid_sent === 'string' ? {
++			text: printableWire(oam.loid_sent) || _('Not configured'),
++			wire: oam.loid_sent,
++			sent: oam.operator === 'ctc'
++		} : null);
++
++		o = s.taboption('authentication', form.ListValue, 'loid_padding', _('LOID padding'));
++		o.default = 'leading';
++		o.depends('operator', 'ctc');
++		o.value('leading', _('Before the LOID (right aligned)'));
++		o.value('trailing', _('After the LOID (left aligned)'));
++		o.description = _('Which side of the 24-byte LOID field carries the 0x00 fill.');
+ 
+ 		o = s.taboption('authentication', form.Value, 'loid_password', _('LOID password'));
+ 		o.password = true;
+@@ -256,34 +353,43 @@ return view.extend({
+ 		o = s.taboption('identity', form.Value, 'vendor_id', _('Vendor ID'));
+ 		o.rmempty = true;
+ 		o.validate = asciiLength(4, 4);
++		applyActualValue(o, identity && identity.vendor_id);
+ 
+ 		o = s.taboption('identity', form.Value, 'model', _('ONU short model'));
+ 		o.rmempty = true;
+ 		o.validate = asciiLength(4, 4);
++		applyActualValue(o, identity && identity.model);
+ 
+ 		o = s.taboption('identity', form.Value, 'equipment_id', _('Equipment ID'));
+ 		o.rmempty = true;
+ 		o.validate = asciiLength(1, 16);
++		applyActualValue(o, identity && identity.equipment_id);
+ 
+ 		o = s.taboption('identity', form.Value, 'hardware_version', _('Hardware version'));
+ 		o.rmempty = true;
+ 		o.validate = asciiLength(1, 8);
++		applyActualValue(o, identity && identity.hardware_version);
+ 
+ 		o = s.taboption('identity', form.Value, 'software_version', _('Software version'));
+ 		o.rmempty = true;
+ 		o.validate = asciiLength(1, 16);
++		applyActualValue(o, identity && identity.software_version);
+ 
+ 		o = s.taboption('identity', form.Value, 'firmware_version', _('Firmware version'));
+ 		o.rmempty = true;
+ 		o.validate = asciiLength(1, 127);
++		applyActualValue(o, identity && identity.firmware_version);
+ 
+ 		o = s.taboption('identity', form.Value, 'chipset_id', _('Chipset ID'));
+ 		o.rmempty = true;
+ 		o.validate = validateChipsetId;
++		applyActualValue(o, identity && identity.chipset_id);
+ 
+ 		o = s.taboption('identity', form.Value, 'ge_ports', _('Ethernet port count'));
+ 		o.default = '1';
+ 		o.datatype = 'range(1,64)';
++		applyActualValue(o, identity && identity.ge_ports,
++			_('The port count is embedded in the 26-byte ONU capabilities attribute.'));
+ 
+ 		return m.render().then(L.bind(function(map) {
+ 			if (!storages.length)
+diff --git a/luci-app-pon/htdocs/luci-static/resources/view/pon/status.js b/luci-app-pon/htdocs/luci-static/resources/view/pon/status.js
+index 0a1941a..400ceed 100644
+--- a/luci-app-pon/htdocs/luci-static/resources/view/pon/status.js
++++ b/luci-app-pon/htdocs/luci-static/resources/view/pon/status.js
+@@ -275,9 +275,27 @@ function loadStatus() {
+ }
+ 
+ function row(label, value) {
++	var content = value == null || value === '' ? _('Unknown') : value;
+ 	return E('tr', { 'class': 'tr' }, [
+ 		E('td', { 'class': 'td left', 'style': 'width: 42%' }, label),
+-		E('td', { 'class': 'td left' }, value == null || value === '' ? _('Unknown') : String(value))
++		E('td', { 'class': 'td left' },
++			[ content && content.nodeType ? content : String(content) ])
++	]);
++}
++
++function displayWireBytes(value) {
++	var printable;
++
++	if (typeof value !== 'string' || !/^(?:[0-9a-f]{2})+$/i.test(value))
++		return _('Unknown');
++	printable = (value.match(/../g) || []).map(function(pair) {
++		var code = parseInt(pair, 16);
++		return (code >= 0x20 && code <= 0x7e) ? String.fromCharCode(code) : '.';
++	}).join('');
++	return E('div', {}, [
++		E('code', { 'style': 'word-break:break-all' }, [ value ]),
++		E('br', {}),
++		E('small', {}, [ _('Printable form: %s').format(printable) ])
+ 	]);
+ }
+ 
+@@ -438,6 +456,9 @@ function renderOam(item) {
+ 			row(_('CTC discovery'), displayCtcDiscovery(values.ctc_discovery_state)),
+ 			row(_('CTC version'), values.ctc_version == null ?
+ 				_('Not negotiated') : '0x' + Number(values.ctc_version).toString(16)),
++			row(_('PON MAC used in ONU SN'), values.source_mac),
++			row(_('CTC ONU SN (0xC7/0x0001)'), displayWireBytes(values.onu_sn)),
++			row(_('LOID sent in authentication'), displayWireBytes(values.loid_sent)),
+ 			row(_('LOID configured locally'), displayBoolean(values.loid_configured)),
+ 			row(_('LOID authentication'), displayAuthentication(values.authentication_status)),
+ 			row(_('CTC VLAN mode'), displayVlanMode(values.vlan_mode)),
+diff --git a/luci-app-pon/po/zh_Hans/pon.po b/luci-app-pon/po/zh_Hans/pon.po
+index dd6062e..b2142f6 100644
+--- a/luci-app-pon/po/zh_Hans/pon.po
++++ b/luci-app-pon/po/zh_Hans/pon.po
+@@ -172,6 +172,18 @@ msgstr "已配置 LOID"
+ msgid "LOID password"
+ msgstr "LOID 密码"
+ 
++msgid "LOID padding"
++msgstr "LOID 补零方向"
++
++msgid "Before the LOID (right aligned)"
++msgstr "在 LOID 之前补零（右对齐）"
++
++msgid "After the LOID (left aligned)"
++msgstr "在 LOID 之后补零（左对齐）"
++
++msgid "Which side of the 24-byte LOID field carries the 0x00 fill."
++msgstr "24 字节 LOID 字段中的 0x00 填充放在哪一侧。"
++
+ msgid "Line mode"
+ msgstr "线路模式"
+ 
+@@ -549,6 +561,15 @@ msgstr "CTC 发现"
+ msgid "CTC version"
+ msgstr "CTC 版本"
+ 
++msgid "CTC ONU SN (0xC7/0x0001)"
++msgstr "CTC ONU SN（0xC7/0x0001，实际发送）"
++
++msgid "LOID sent in authentication"
++msgstr "认证帧中实际发送的 LOID"
++
++msgid "Printable form: %s"
++msgstr "可打印形式：%s"
++
+ msgid "Received OAM messages"
+ msgstr "OAM 接收报文"
+ 
+@@ -941,3 +962,39 @@ msgstr "Alloc-ID 等待超时"
+ 
+ msgid "Seconds a data path may wait for PLOAM to assign its Alloc-ID before it is reported as failed. The ONU keeps waiting afterwards; 0 disables the timeout."
+ msgstr "数据通道等待 PLOAM 分配 Alloc-ID 的秒数，超过后报告失败。之后 ONU 仍会继续等待；0 表示不超时。"
++
++msgid "Use six colon-separated hexadecimal bytes, e.g. 00:11:22:33:44:55."
++msgstr "请使用 6 个以冒号分隔的十六进制字节，例如 00:11:22:33:44:55。"
++
++msgid "The PON MAC address must be a unicast address."
++msgstr "PON MAC 地址必须是单播地址。"
++
++msgid "The PON MAC address must not be all zeros."
++msgstr "PON MAC 地址不能全为零。"
++
++msgid "Used only by XG-PON and XGS-PON PLOAM registration; EPON registers with the PON MAC address."
++msgstr "仅 XG-PON / XGS-PON 的 PLOAM 注册使用该 SN；EPON 使用 PON MAC 地址注册。"
++
++msgid "Overrides the PON interface MAC used for EPON registration and the CTC ONU SN. Takes effect after a PON restart. Clearing it restores the factory MAC only after a reboot."
++msgstr "覆盖用于 EPON 注册和 CTC ONU SN 的 PON 接口 MAC 地址，重启 PON 线路后生效。清空该项后需重启设备才能恢复出厂 MAC。"
++
++msgid "PON MAC used in ONU SN"
++msgstr "ONU SN 中实际使用的 PON MAC"
++
++msgid "Not configured"
++msgstr "未配置"
++
++msgid "Currently: %s"
++msgstr "当前：%s"
++
++msgid "Actually sent: %s"
++msgstr "实际发送：%s"
++
++msgid "Not sent with the current OAM profile or CTC version."
++msgstr "当前 OAM 协议或 CTC 版本下不会发送该字段。"
++
++msgid "The running OAM agent does not report the current value."
++msgstr "当前运行的 OAM 代理未上报该实际值。"
++
++msgid "The port count is embedded in the 26-byte ONU capabilities attribute."
++msgstr "端口数量嵌在 26 字节的 ONU 能力属性中上报。"
