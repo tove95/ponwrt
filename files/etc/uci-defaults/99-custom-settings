@@ -302,4 +302,12 @@ vm.percpu_pagelist_high_fraction=128
 EOF
 sysctl -p /etc/sysctl.d/20-airoha-memory.conf 2>/dev/null || true
 
+# 12. 预置中国标准时间 (Asia/Shanghai / CST-8) 与完整 NTP 校时
+uci -q batch <<EOF
+set system.@system[0].timezone='CST-8'
+set system.@system[0].zonename='Asia/Shanghai'
+commit system
+EOF
+/etc/init.d/system reload 2>/dev/null || true
+
 exit 0
