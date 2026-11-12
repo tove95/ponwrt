@@ -46,7 +46,7 @@ Every release automatically compiles and packages **both devices** into separate
 - **Backported QWRT memory anti-fragmentation optimization (`vm.percpu_pagelist_high_fraction = 128`)**, preventing high-concurrency page allocation stalls.
 - **LAN Multicast Bypass (`NOTRACK`)**: UPnP SSDP (`239.255.255.250:1900`) and Windows WSD (`3702`) bypass conntrack, preventing table exhaustion.
 - **Unified 16MB TCP/UDP Buffers**: Aligns `99-custom-net-optimization.conf` and `30-network-buffers.conf` to `16777216` (`16MB`) so hotplug/boot sysctl reloads never revert buffers back to 8MB.
-- **Gentle `ondemand` CPUFreq Scaling**: `500–1200 MHz` with **`upthreshold0='70'`** and **`sdfactor0='4'`**, rapidly dropping idle frequency to ~`650 MHz` for cooler thermals (~`68.8°C` post-load) while boosting smoothly to `1.2 GHz` under heavy traffic.
+- **Fine-grained `ondemand` CPUFreq Scaling & Thermal Tuning**: `500–1200 MHz` with **`upthreshold0='75'`**, **`sdfactor0='1'`**, **`powersave_bias='100'` (10% power-save bias)**, **`ignore_nice_load='1'`**, and **`io_is_busy='0'`**. Fully leverages the 15 intermediate OPP steps (750–950 MHz) to flatten voltage spikes, drops to 500–650 MHz instantly when burst traffic ceases, and prevents background cron/I/O tasks from locking maximum frequency.
 
 ### 4. Kernel Netfilter NFQUEUE Integration (Native Sing-Box `auto-redirect`)
 - Compiled and integrated `kmod-nfnetlink-queue`, `kmod-nft-queue`, and `kmod-ipt-nfqueue`.

@@ -284,6 +284,15 @@ echo 1 > /proc/irq/17/smp_affinity_list 2>/dev/null
 echo 2 > /proc/irq/21/smp_affinity_list 2>/dev/null
 [ -x /usr/sbin/pin-wifi-cpus.sh ] && /usr/sbin/pin-wifi-cpus.sh
 
+# 6. 精细化 CPUFreq ondemand 功耗与温控调度（75%门限、驻留倍数1立即回落、10%节电偏置激活中间频阶、忽略低优后台负载）
+if [ -d /sys/devices/system/cpu/cpufreq/ondemand ]; then
+    echo 75 > /sys/devices/system/cpu/cpufreq/ondemand/up_threshold 2>/dev/null
+    echo 1 > /sys/devices/system/cpu/cpufreq/ondemand/sampling_down_factor 2>/dev/null
+    echo 100 > /sys/devices/system/cpu/cpufreq/ondemand/powersave_bias 2>/dev/null
+    echo 1 > /sys/devices/system/cpu/cpufreq/ondemand/ignore_nice_load 2>/dev/null
+    echo 0 > /sys/devices/system/cpu/cpufreq/ondemand/io_is_busy 2>/dev/null
+fi
+
 exit 0
 RCLOCAL
 
@@ -327,8 +336,8 @@ set cpufreq.cpufreq=settings
 set cpufreq.cpufreq.governor0='ondemand'
 set cpufreq.cpufreq.minfreq0='500000'
 set cpufreq.cpufreq.maxfreq0='1200000'
-set cpufreq.cpufreq.sdfactor0='4'
-set cpufreq.cpufreq.upthreshold0='70'
+set cpufreq.cpufreq.sdfactor0='1'
+set cpufreq.cpufreq.upthreshold0='75'
 set cpufreq.global=settings
 set cpufreq.global.set='1'
 commit cpufreq

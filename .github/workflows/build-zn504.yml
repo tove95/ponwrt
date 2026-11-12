@@ -156,7 +156,7 @@ jobs:
               - 移植 QWRT 内存防碎片参数 (`vm.percpu_pagelist_high_fraction = 128`)，提升高通量多核并发页面分配效率
               - 移植 QWRT SSDP (`239.255.255.250:1900`) 与 WSD (`3702`) `NOTRACK` 局域网广播旁路，防止连接跟踪表与交换芯片 CDM 队列膨胀
               - 统一对齐 `16MB` (`16777216`) TCP/UDP 核心与套接字缓冲区（`99-custom-net-optimization.conf` 与 `30-network-buffers.conf`），防止热插拔重载回退，彻底消除高带宽长肥管道瓶颈
-              - 温和 `ondemand` 动态睿频调度（`500–1200 MHz`，`upthreshold0='70'`、`sdfactor0='4'`），空闲快速回落至 ~`650 MHz` 有效控温，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
+              - 精细化 `ondemand` 动态睿频功耗与温控调度（`500–1200 MHz`，`upthreshold0='75'`、`sdfactor0='1'`、`powersave_bias='100'` 10% 节电偏置、`ignore_nice_load='1'`），激活 15 阶密集 OPP 中间频阶并于重载后毫秒级降频，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
             * **集成 QWRT 核心硬件特性**：
               - Airoha AN7581 NPU / PPE 硬件流量转发加速 (`luci-app-airoha-npu`, `luci-app-hqos`)
               - CPU 调频策略与频率管理 (`luci-app-cpufreq`)

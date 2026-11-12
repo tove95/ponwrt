@@ -46,7 +46,7 @@
 - **移植 QWRT 内存防碎片参数（`vm.percpu_pagelist_high_fraction = 128`）**：深度优化单核 page 列表阈值，彻底杜绝 4 核并发高吞吐下的物理内存碎片与分配延迟。
 - **局域网广播免连接跟踪（`NOTRACK`）**：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
 - **统一 16MB TCP/UDP 套接字与内核缓冲区**：将 `99-custom-net-optimization.conf` 与 `30-network-buffers.conf` 全部统一至 `16777216` (`16MB`)，消除热插拔或 `rc.local` 重载 `sysctl` 时从 16MB 回退至 8MB 的隐患，兼顾 4K 串流与代理高并发吞吐。
-- **温和 `ondemand` 动态睿频与温控平衡**：`500MHz ~ 1200MHz` 配合 **`upthreshold0='70'`**、**`sdfactor0='4'`**，避免系统微负载长期顶在 1.2GHz；实测高负载结束数秒内即可快速降频至 `650MHz` 稳步降温（~`68.8°C`），同时不影响突发千兆转发与无线吞吐。
+- **精细化 `ondemand` 动态睿频与温控平衡**：`500MHz ~ 1200MHz` 配合 **`upthreshold0='75'`**、**`sdfactor0='1'`**、**`powersave_bias='100'`（10% 节电偏置）**、**`ignore_nice_load='1'`** 与 **`io_is_busy='0'`**，充分激活 AN7581 的 15 阶中间频阶（如 750~950MHz），高负载结束后毫秒级快速回落至 500~650MHz 稳步降温，同时杜绝后台维护任务和 Flash 读写盲目拉满频，兼顾发热控制与千兆/无线线速转发。
 
 ### 4. 内核级 Netfilter NFQUEUE 支持（原生支持 Sing-Box `auto-redirect`）
 - 编译并集成 `kmod-nfnetlink-queue`、`kmod-nft-queue` 及 `kmod-ipt-nfqueue` 内核模块。
