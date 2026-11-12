@@ -47,6 +47,7 @@
 - **局域网广播免连接跟踪（`NOTRACK`）**：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
 - **统一 16MB TCP/UDP 套接字与内核缓冲区**：将 `99-custom-net-optimization.conf` 与 `30-network-buffers.conf` 全部统一至 `16777216` (`16MB`)，消除热插拔或 `rc.local` 重载 `sysctl` 时从 16MB 回退至 8MB 的隐患，兼顾 4K 串流与代理高并发吞吐。
 - **精细化 `ondemand` 动态睿频与温控平衡**：`500MHz ~ 1200MHz` 配合 **`upthreshold0='75'`**、**`sdfactor0='1'`**、**`powersave_bias='100'`（10% 节电偏置）**、**`ignore_nice_load='1'`** 与 **`io_is_busy='0'`**，充分激活 AN7581 的 15 阶中间频阶（如 750~950MHz），高负载结束后毫秒级快速回落至 500~650MHz 稳步降温，同时杜绝后台维护任务和 Flash 读写盲目拉满频，兼顾发热控制与千兆/无线线速转发。
+- **日常用量画像与工作日/周末分时温控 (`/usr/sbin/traffic-profiler.sh`)**：内置极轻量整点网络吞吐与温度采样引擎，区分工作日（1-5）与周末（6,0），保留 14 天滚动历史；提供直观的 24 小时流量分布与温度终端直方图报告（`/usr/sbin/traffic-profiler.sh report`），并支持一键将实测作息推导写入 Crontab 分时调频（`/usr/sbin/traffic-profiler.sh apply`，例如工作日深夜/离家 650MHz 极冷休眠、周末与晚间高峰 1.2GHz 全血释放）。
 
 ### 4. 内核级 Netfilter NFQUEUE 支持（原生支持 Sing-Box `auto-redirect`）
 - 编译并集成 `kmod-nfnetlink-queue`、`kmod-nft-queue` 及 `kmod-ipt-nfqueue` 内核模块。
