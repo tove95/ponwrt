@@ -23,7 +23,7 @@ set firewall.allow_feiniu_nas_ipv6.src='wan'
 set firewall.allow_feiniu_nas_ipv6.dest='lan'
 set firewall.allow_feiniu_nas_ipv6.family='ipv6'
 set firewall.allow_feiniu_nas_ipv6.proto='tcp udp'
-set firewall.allow_feiniu_nas_ipv6.dest_port='21 22 5005 5006 5255 5666 5667 8200 9024 9876'
+set firewall.allow_feiniu_nas_ipv6.dest_port='21 22 5005 5006 5255 5666 5667 8005 8200 9024 9876'
 set firewall.allow_feiniu_nas_ipv6.target='ACCEPT'
 
 set firewall.allow_macmini_ipv6=rule
