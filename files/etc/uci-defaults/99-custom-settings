@@ -246,7 +246,6 @@ chmod +x /etc/hotplug.d/net/99-wifi-affinity 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/90-ipv6-fix 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/95-iptv-m3u-ip 2>/dev/null || true
 chmod +x /usr/sbin/pin-wifi-cpus.sh 2>/dev/null || true
-chmod +x /usr/sbin/traffic-profiler.sh 2>/dev/null || true
 
 # 首次启动时自动将 /www/iptv.m3u 中的播放地址同步为当前 LAN IP
 LAN_IP=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
@@ -302,11 +301,9 @@ uci set system.@system[0].zram_size_mb='256'
 uci set system.@system[0].zram_comp_algo='zstd'
 uci commit system
 
-# 7. 每日凌晨 04:30 自动执行 ZRAM 内存空洞压缩整理，每小时整点采样网络流量与温度画像
+# 7. 每日凌晨 04:30 自动执行 ZRAM 内存空洞压缩整理（紧跟 04:00 momo 定时重启之后）
 mkdir -p /etc/crontabs
-(crontab -l 2>/dev/null | grep -v 'compact' | grep -v 'traffic-profiler'; \
- echo "30 4 * * * echo 1 > /sys/block/zram0/compact 2>/dev/null"; \
- echo "0 * * * * /usr/sbin/traffic-profiler.sh record >/dev/null 2>&1") | crontab -
+(crontab -l 2>/dev/null | grep -v 'compact'; echo "30 4 * * * echo 1 > /sys/block/zram0/compact 2>/dev/null") | crontab -
 
 # 8. QWRT 经典性能调优：iperf3 测速绑定 Core 3、wget 证书防抖、dnsmasq 降噪
 sed -i '/iperf3=/d' /etc/profile 2>/dev/null
@@ -318,7 +315,7 @@ echo "log-facility=/dev/null" >> /etc/dnsmasq.conf
 # 9. 烽火 (FiberHome) PON 认证与 Momo 自启配置跨版本升级自动保护机制
 # 将关键路径加入 /etc/sysupgrade.conf，防止固件升级抹除认证数据与开机自启
 SYSUPGRADE_CONF="/etc/sysupgrade.conf"
-for path in "/etc/config/pon" "/etc/fiberhome_pon_backup.uci" "/etc/fiberhome_pon_info.txt" "/usr/sbin/backup-fiberhome-pon.sh" "/usr/sbin/restore-fiberhome-pon.sh" "/etc/rc.d/S99momo" "/etc/rc.d/K10momo" "/usr/sbin/traffic-profiler.sh" "/etc/traffic_hourly.log"; do
+for path in "/etc/config/pon" "/etc/fiberhome_pon_backup.uci" "/etc/fiberhome_pon_info.txt" "/usr/sbin/backup-fiberhome-pon.sh" "/usr/sbin/restore-fiberhome-pon.sh" "/etc/rc.d/S99momo" "/etc/rc.d/K10momo"; do
     if ! grep -q "^$path" "$SYSUPGRADE_CONF" 2>/dev/null; then
         echo "$path" >> "$SYSUPGRADE_CONF"
     fi
