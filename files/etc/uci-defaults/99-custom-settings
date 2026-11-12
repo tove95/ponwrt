@@ -69,15 +69,71 @@ EOF
 
 
 
-# 2. 预置 rtp2httpd 高性能组播/RTSP/FCC 代理参数 (接管 port 4022，兼容 /www/iptv.m3u 与 udpxy 路径格式)
+# 1.3 预置单线复用异 VLAN IPTV 桥接与端口隔离 (pon0.45 IGMP 上行 + pon0.50 组播下行，原生 bridge-port isolate='1' 防止环路反射)
+if [ -z "$(uci -q get network.iptv)" ]; then
+    uci -q batch <<EOF
+set network.pon0_45=bridge-port
+set network.pon0_45.device='pon0.45'
+set network.pon0_45.isolate='1'
+
+set network.pon0_50=bridge-port
+set network.pon0_50.device='pon0.50'
+set network.pon0_50.isolate='1'
+
+set network.br_iptv=device
+set network.br_iptv.name='br-iptv'
+set network.br_iptv.type='bridge'
+set network.br_iptv.igmp_snooping='0'
+add_list network.br_iptv.ports='pon0.45'
+add_list network.br_iptv.ports='pon0.50'
+
+set network.iptv=interface
+set network.iptv.proto='static'
+set network.iptv.device='br-iptv'
+set network.iptv.ipaddr='169.254.50.2'
+set network.iptv.netmask='255.255.255.0'
+set network.iptv.defaultroute='0'
+set network.iptv.peerdns='0'
+set network.iptv.delegate='0'
+commit network
+EOF
+fi
+
+if [ -z "$(uci -q get firewall.iptv)" ]; then
+    uci -q batch <<EOF
+set firewall.iptv=zone
+set firewall.iptv.name='iptv'
+set firewall.iptv.input='DROP'
+set firewall.iptv.output='ACCEPT'
+set firewall.iptv.forward='DROP'
+add_list firewall.iptv.network='iptv'
+
+set firewall.allow_iptv_igmp=rule
+set firewall.allow_iptv_igmp.name='Allow-IPTV-IGMP'
+set firewall.allow_iptv_igmp.src='iptv'
+set firewall.allow_iptv_igmp.proto='igmp'
+set firewall.allow_iptv_igmp.target='ACCEPT'
+
+set firewall.allow_iptv_mcast=rule
+set firewall.allow_iptv_mcast.name='Allow-IPTV-Multicast'
+set firewall.allow_iptv_mcast.src='iptv'
+set firewall.allow_iptv_mcast.proto='udp'
+set firewall.allow_iptv_mcast.dest_ip='224.0.0.0/4'
+set firewall.allow_iptv_mcast.target='ACCEPT'
+commit firewall
+EOF
+fi
+
+# 2. 预置 rtp2httpd 高性能组播/RTSP/FCC 代理参数 (接管 port 4022，绑定 br-iptv，兼容 /www/iptv.m3u 与 udpxy 路径格式)
+# 注意：listen 使用纯端口号 '4022' 以同时监听 IPv4/IPv6，并避免 LuCI 状态/播放器按钮跳转到 http://0.0.0.0:4022
 if [ -f /etc/config/rtp2httpd ]; then
     if uci -q get rtp2httpd.@rtp2httpd[0] >/dev/null; then
         uci -q batch <<EOF
 set rtp2httpd.@rtp2httpd[0].disabled='0'
 set rtp2httpd.@rtp2httpd[0].respawn='1'
 del rtp2httpd.@rtp2httpd[0].listen
-add_list rtp2httpd.@rtp2httpd[0].listen='0.0.0.0:4022'
-add_list rtp2httpd.@rtp2httpd[0].listen='[::]:4022'
+add_list rtp2httpd.@rtp2httpd[0].listen='4022'
+set rtp2httpd.@rtp2httpd[0].upstream_interface='br-iptv'
 set rtp2httpd.@rtp2httpd[0].workers='4'
 set rtp2httpd.@rtp2httpd[0].maxclients='20'
 set rtp2httpd.@rtp2httpd[0].buffer_pool_max_size='16384'
@@ -88,10 +144,9 @@ EOF
     elif uci -q get rtp2httpd.@instance[0] >/dev/null; then
         uci -q batch <<EOF
 set rtp2httpd.@instance[0].enabled='1'
-del_list rtp2httpd.@instance[0].listen='0.0.0.0:5140'
-del_list rtp2httpd.@instance[0].listen='[::]:5140'
-add_list rtp2httpd.@instance[0].listen='0.0.0.0:4022'
-add_list rtp2httpd.@instance[0].listen='[::]:4022'
+del rtp2httpd.@instance[0].listen
+add_list rtp2httpd.@instance[0].listen='4022'
+set rtp2httpd.@instance[0].upstream_interface='br-iptv'
 set rtp2httpd.@instance[0].noudpxy='0'
 set rtp2httpd.@instance[0].workers='4'
 set rtp2httpd.@instance[0].maxclients='20'

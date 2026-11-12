@@ -173,8 +173,11 @@ jobs:
             * **集成 LeoooChen 项目精华**：
               - XG-PON 线路与 PPPoE 线速硬件流量卸载（千兆带宽 CPU 占用低至约 4.5%）
               - 8MB 高通量网络与 IPTV 环形缓冲区调优，杜绝 4K/8K 组播与突发丢包
+            * **电信 4K/8K IPTV 开箱即用 (`br-iptv` + `rtp2httpd`)**：
+              - 首启自动构建异 VLAN 隔离网桥 `br-iptv`（`pon0.45` IGMP 上行 + `pon0.50` 组播下行，启用 `netifd` 原生 `bridge-port isolate='1'` 防二层环路反射）与 `169.254.50.2/24` 无默认路由 `iptv` 接口及专属 `iptv` 防火墙规则
+              - `rtp2httpd` 默认纯端口 `4022` 双栈监听（修复 LuCI 状态/播放器按钮跳转 `0.0.0.0` 问题），上游默认绑定 `br-iptv`，内置 `/www/iptv.m3u` 与 `/playlist.m3u` 订阅入口
             * **Momo / Sing-box 透明代理**：
-              - 原生集成 `luci-app-momo` 与最新 `sing-box` 核心
+              - 原生集成 `luci-app-momo` 与最新 `sing-box 1.15.0-alpha.13` 预览版核心（支持 `endpoints[].on_demand` 等 1.15+ 新版订阅语法）
               - 预置 128MiB 健康堆内存上限与定时内存整理防爆机制
               - 预置 Momo 完整简体中文汉化语言包
           files: output/*

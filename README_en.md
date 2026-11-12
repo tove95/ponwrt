@@ -53,6 +53,7 @@ Every release automatically compiles and packages **both devices** into separate
 - Completely solves the crash when enabling `auto_redirect: true` in Sing-Box / Momo on stock PonWrt:
   > `FATAL[0000] start nfqueue: could not unbind existing handlers: netlink receive: invalid argument (-EINVAL)`
 - Enables native transparent proxy redirection via Sing-Box TUN mode without requiring complex custom nftables scripting.
+- **Bundled `sing-box 1.15.0-alpha.13` pre-release core** (packaged as `1.15.0_alpha13` for OpenWrt APK v3 version compliance while preserving `1.15.0-alpha.13` internally), adding native support for `1.15+` syntax such as `endpoints[].on_demand`.
 - Preset Momo in core-only mode (`core_only='1'`) so traffic routing and bypass rules follow the user's `sing-box` subscription cleanly, with `GOMEMLIMIT=128MiB`.
 
 ### 5. First-Principles Pure Crypto Pipeline (Removed SafeXcel/EIP-93 Negative Acceleration)
@@ -63,10 +64,10 @@ Every release automatically compiles and packages **both devices** into separate
   - **Modern User-Space Proxies Unaffected**: Sing-box and Momo run in user space using pure Go-assembly ARMv8 `asimd` (NEON) vector routines, never touching the kernel Crypto API.
   - **Full-Rate WireGuard**: WireGuard strictly utilizes **ChaCha20-Poly1305** (unsupported by EIP-93 silicon). Eliminating EIP-93 leaves all 4 Cortex-A53 cores (1.2GHz) dedicated to clean `chacha20-neon` processing without interrupt storm interference.
 
-### 6. Dual-Stack 4K/8K IPTV Multicast Engine
-- **PON Layer**: Bind carrier IPTV and multicast VLANs directly during bridging or dial-up.
-- **Application Layer**: Integrated `msd_lite` (port 4022, 8MB ring buffer + 4 threads) and 8MB UDP buffer tuning to eliminate 4K/8K multicast frame drops.
-- **Dynamic Playlist**: Bundled with Guangdong Shenzhen Telecom `/www/iptv.m3u`, automatically updated with gateway IP via hotplug script.
+### 6. Dual-Stack 4K/8K IPTV Engine (`rtp2httpd` + Asymmetric-VLAN Isolated Bridge)
+- **Out-of-the-Box PON Bridge Layer**: Pre-configured on first boot for asymmetric carrier IPTV setups (such as Guangdong/Shenzhen Telecom: IGMP join upstream on VLAN `45`, multicast downstream on VLAN `50`): creates `br-iptv` (`igmp_snooping='0'`) bridging `pon0.45` and `pon0.50` with native `netifd` port isolation (`isolate='1'`) to prevent L2 multicast loops, an isolated `iptv` static interface (`169.254.50.2/24`, `defaultroute='0'`), and an `iptv` firewall zone allowing inbound `IGMP` and `224.0.0.0/4` `UDP`.
+- **Application Layer (`rtp2httpd`)**: Replaced legacy `msd_lite` with high-performance C multicast proxy **`rtp2httpd`** (listening on bare port `'4022'` dual-stack so LuCI status/player buttons resolve the router IP cleanly instead of `0.0.0.0`, bound to `upstream_interface='br-iptv'`, with 4 `SO_REUSEPORT` workers, 16384 zero-copy buffers, and 2MB UDP `rcvbuf`), plus built-in `/status` and `/player` web UIs.
+- **Ready-to-Use Playlists**: Bundled with Guangdong Shenzhen Telecom `/www/iptv.m3u` (`http://192.168.1.1/iptv.m3u`) and dynamically served via `http://192.168.1.1:4022/playlist.m3u`, auto-synced to gateway LAN IP via `95-iptv-m3u-ip`, and compatible with `/rtp/<multicast_ip:port>`.
 
 ### 7. Cloudflare DDNS & Full-Featured DNSMASQ
 - **Cloudflare DDNS**: Integrated `ddns-scripts-cloudflare` for dual-stack IPv4/IPv6 automated dynamic DNS resolution.
@@ -243,7 +244,21 @@ pondctl status --line line0
 ```
 * `authentication_meaning`: `"accepted"` confirms valid credential verification.
 * `backend_state`: `"applied"` confirms provisioned GEM Port and T-CONT data paths.
-* `vlan_ids`: Includes your local Internet (`41`) and IPTV (`45`) tags.
+* `vlan_ids`: Includes your local Internet (`41`) and IPTV (`45` / `50`) tags.
+
+---
+
+## 📺 Out-of-the-Box IPTV (`br-iptv` Asymmetric VLAN + `rtp2httpd`)
+
+The firmware pre-configures IPTV on first boot via `99-custom-settings`:
+
+- **Asymmetric VLAN Bridge (`br-iptv`)**: Bridges `pon0.45` (IGMP join upstream) and `pon0.50` (multicast downstream) with `igmp_snooping='0'` and per-port `isolate='1'` to eliminate L2 multicast echo loops.
+- **Interface & Firewall**: Static `iptv` interface (`169.254.50.2/24`, `defaultroute='0'`) in an `iptv` firewall zone (`DROP` input/forward, allowing `IGMP` and `224.0.0.0/4` `UDP`).
+- **Playlist & Access URLs** (replace `192.168.1.1` if you changed your LAN IP):
+  - **Recommended M3U Subscription (`rtp2httpd`)**: `http://192.168.1.1:4022/playlist.m3u`
+  - **Static Built-in M3U (`uhttpd`)**: `http://192.168.1.1/iptv.m3u`
+  - **Status Dashboard / Web Player**: `http://192.168.1.1:4022/status` / `http://192.168.1.1:4022/player`
+  - *(Note: `rtp2httpd` listens on bare port `4022` so LuCI status/player buttons resolve the router hostname rather than `0.0.0.0`.)*
 
 ---
 
@@ -282,6 +297,7 @@ Per [Sing-Box documentation](https://deepwiki.com/SagerNet/sing-box), `auto_redi
 git clone https://github.com/wuziwei/ponwrt-ZN504.git
 cd ponwrt-ZN504
 ./scripts/feeds update -a && ./scripts/feeds install -a
+bash ./scripts/customize.sh
 
 # 2. Apply AN7581 enhanced configuration
 ./scripts/kconfig.pl + configs/an7581.config configs/release.config > .config
@@ -317,5 +333,5 @@ Outputs are generated under `bin/targets/airoha/an7581/`.
 - **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**: Next-generation proxy engine.
 - **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**: Streamlined sing-box WebUI and transparent gateway integration.
 - **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**: Airoha AN7581 8-core NPU & PPE telemetry dashboard.
-- **[rozhuk-im/msd_lite](https://github.com/rozhuk-im/msd_lite)**: Ultra-lightweight high-throughput IPTV proxy.
+- **[stackia/rtp2httpd](https://github.com/stackia/rtp2httpd)**: High-performance zero-copy 4K/8K IPTV multicast, FCC, and RTSP proxy with built-in web player and status dashboard.
 - **[VizzleTF/luci-theme-footstrap](https://github.com/VizzleTF/luci-theme-footstrap)**: Modern responsive theme for PonWrt.
