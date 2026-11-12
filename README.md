@@ -63,10 +63,10 @@
   - **现代透明代理零受损**：Momo / Sing-box / Xray 均为 Go 语言编写的用户态程序，全部调用 Go-assembly 针对 ARMv8 `asimd`（NEON）高度优化的向量算法，**天然不经过内核 Crypto API**。
   - **WireGuard 满血释放**：WireGuard 强制使用 **ChaCha20-Poly1305**（EIP-93 硬件根本不支持），剔除 EIP-93 的中断抢占后，内核直接调用 AN7581 强大的 4 核心 1.2GHz NEON 向量单元（`chacha20-neon`），流水线零延迟，杜绝网络丢包与抖动。
 
-### 6. 电信 4K/8K IPTV 双栈引擎
-- **PON 层**：支持在光猫拨号/桥接时直接绑定电信 IPTV 业务 VLAN / 组播 VLAN。
-- **应用层**：内置 `msd_lite`（默认监听 `4022` 端口，配置 8MB 环形大缓存 + 4 线程），搭配 8MB UDP 内核缓冲调优（`99-custom-net-optimization.conf`），杜绝 4K/8K 组播丢包。
-- **智能播放列表**：内置广东深圳电信全分类 `/www/iptv.m3u`，并通过 `95-iptv-m3u-ip` 热插拔脚本自动随网关当前 LAN IP 动态替换播放列表中的 IP 地址。
+### 6. 电信 4K/8K IPTV 双栈引擎 (`rtp2httpd`)
+- **PON 层**：支持在光猫拨号/桥接时直接绑定电信 IPTV 业务 VLAN / 组播 VLAN，内核已默认开启 `rp_filter = 0` 并配置网桥组播直通（`multicast_snooping = 0` + `multicast_router = 2`）。
+- **应用层**：内置新一代高性能 C 语言组播代理 **`rtp2httpd`**（替代传统 `udpxy` / `msd_lite`，默认监听 `4022` 双栈端口，启用 4 Worker `SO_REUSEPORT` 多核并发、16384 零拷贝缓冲池与 2MB UDP 接收缓存），支持组播转单播、FCC 快速切台与 RTSP 回看，并自带 `/status` 状态监控面板与 `/player` 网页播放器。
+- **智能播放列表**：内置广东深圳电信全分类 `/www/iptv.m3u`（`rtp2httpd` 自动加载 `file:///www/iptv.m3u` 提供 `/playlist.m3u` 动态聚合订阅），并通过 `95-iptv-m3u-ip` 热插拔脚本随网关当前 LAN IP 自动同步，同时完全兼容 `/rtp/<组播IP:端口>` 传统路径格式。
 
 ### 7. 动态域名解析 (Cloudflare DDNS) 与全功能 DNS 引擎
 - **Cloudflare DDNS**：内置 `ddns-scripts-cloudflare`，开箱即用支持双栈 IPv4 / IPv6 动态域名极速解析。
@@ -257,6 +257,116 @@ pondctl status --line line0
 
 ---
 
+## 📺 电信 IPTV 组播转单播（rtp2httpd）详细配置教程
+
+本固件已内置并默认启用 **`rtp2httpd`**（监听 `0.0.0.0:4022` 与 `[::]:4022`，开箱加载 `/www/iptv.m3u` 并提供网页播放器与状态监控）。要让家庭内网手机、电视、电脑稳定收看 4K/8K 组播节目，只需打通「**PON 光纤 VLAN → IPTV 网络接口 → 防火墙 IGMP → rtp2httpd 上游接口**」四步即可。
+
+### 第一步：确认光纤已下发 IPTV VLAN ID
+
+先在光猫 SSH 执行 `pondctl status --line line0`，查看返回的 `vlan_ids` 列表：
+* 例如返回 `"vlan_ids": [1, 41, 45]`：其中 `41` 通常是宽带上网 VLAN，`45` 通常是电信 IPTV 组播 VLAN（不同省市常见为 `43` / `45` / `85` 等，请以原光猫后台「网络 → 宽带设置 → IPTV」页面记录的 VLAN ID 为准）。
+
+> [!NOTE]
+> **系统底层已自动调优，无需手动折腾内核参数**：
+> 固件预置的 `99-custom-net-optimization.conf` 与 `99-multicast` 已默认开启 `net.ipv4.conf.all.rp_filter = 0`（关闭严格反向路径校验，允许跨网段组播源入站）、关闭网桥 `multicast_snooping`、放大 `rmem_max = 8MB` 及 `txqueuelen = 5000`，确保 4K/8K 高码流零丢包。
+
+---
+
+### 第二步：创建 IPTV VLAN 设备与接口（按地区接入方式二选一）
+
+#### 1. 先创建 802.1Q VLAN 设备（通用前置步骤）
+1. 登录 LuCI（`http://192.168.1.1`），进入 **网络 (Network) → 接口 (Interfaces) → 设备 (Devices)** 标签页；
+2. 点击 **添加设备配置 (Add device configuration)**：
+   - **设备类型**：`VLAN (802.1q)`
+   - **基础设备**：`pon0`
+   - **VLAN ID**：填写当地 IPTV VLAN（如 `45`）
+   - **设备名称**：自动生成为 `pon0.45`
+3. 保存。
+
+#### 2. 创建 `iptv` 逻辑接口（根据当地运营商认证模式选择）
+
+进入 **网络 → 接口 → 添加新接口**，名称填 `iptv`，设备选择刚创建的 **`pon0.45`**，防火墙区域归入 **`wan`**（或单独新建区域并放行入站 `IGMP` 与 `UDP`）：
+
+| 地区接入模式 | 适用典型地区 | 协议与关键设置 |
+| :--- | :--- | :--- |
+| **模式 A：纯组播通道（无需拿 IP / 无认证）** | 广东/深圳电信大多数单播+组播分离线路、部分南方省市 | 协议选 **不配置协议 (Unmanaged)** 或 **静态地址**（填一个内网不冲突私有地址如 `169.254.254.2/30`，**不要填网关**），保证链路处于 `UP` 即可加入 IGMP 组播组。 |
+| **模式 B：IPoE / DHCP（需获取专网 IP 或 Option 60 鉴权）** | 部分需要 IPTV 内网认证才能放行组播/单播回看的地区 | 协议选 **DHCP 客户端**；进入 **高级设置**：<br>1. ⚠️ **务必取消勾选“使用默认网关 (Use default gateway)”**（极重要！防止 IPTV 网关覆盖宽带默认路由导致全局断网）；<br>2. 如当地校验机顶盒指纹，在 **DHCP 请求中发送的 Vendor Class** 填入原光猫/机顶盒的 Option 60 字符串；<br>3. 若 IPTV 源地址不在 DHCP 分配子网内，可在 **静态路由** 添加一条走 `iptv` 接口的组播网段/信令路由。 |
+
+> [!TIP]
+> **特殊拓扑：本光猫作为旁路由/下级网桥，组播源从 LAN 网口进入**  
+> 如果 IPTV 光猫在上一级（例如上一级已把 IPTV 组播送入当前设备的网口 `br-lan`），则无需新建 `pon0.45`，直接在下一步将 `rtp2httpd` 的上游接口选为 **`br-lan`**（或留空自动选路）即可。
+
+---
+
+### 第三步：确认防火墙放行 IGMP 组播协议
+
+1. 进入 **网络 → 防火墙 → 通信规则 (Traffic Rules)**；
+2. 检查默认规则 **`Allow-IGMP`**（源区域 `wan`、协议 `IGMP`、动作 `接受输入`）处于启用状态；
+3. 若你为 `iptv` 新建了独立防火墙区域（非 `wan`），需确保该区域：
+   - 入站（Input）允许 `IGMP`；
+   - 入站（Input）允许目标 IP 为 `224.0.0.0/4` 的 `UDP` 组播流量（组播数据包目的地址均为 `224.0.0.0/4`）。
+
+---
+
+### 第四步：配置 `rtp2httpd` 绑定组播上游接口
+
+进入 **服务 (Services) → rtp2httpd**：
+1. 确认未勾选禁用，监听地址为 `0.0.0.0:4022` 与 `[::]:4022`（固件已预置，默认兼容端口 `4022`）；
+2. **指定上游接口（最关键一步）**：
+   - 在 **上游接口 (`upstream_interface`)** 下拉选择刚创建的 **`iptv`** 接口（或物理设备 `pon0.45`；若组播从网桥进则选 `br-lan`）；
+   - 如果同时接入了组播直播与单播回看（RTSP）且分别在不同接口，可开启 **高级接口设置** 分别指定「组播上游接口」与「RTSP 上游接口」；
+3. **外部 M3U 播放列表**：默认已填 `file:///www/iptv.m3u`（固件内置深圳电信 4K/高清列表，也可换成你本地或在线的 M3U 订阅链接）；
+4. 推荐性能参数（固件首次启动已自动写入）：
+   - `workers`: `4`（匹配 AN7581 四核 `SO_REUSEPORT` 并发处理）
+   - `maxclients`: `20`
+   - `buffer_pool_max_size`: `16384`
+   - `udp_rcvbuf_size`: `2097152`（2MB 套接字接收缓冲）
+5. 点击 **保存并应用**。
+
+---
+
+### 第五步：客户端播放与常用访问入口
+
+配置完成后，在同一局域网内的电视盒子（APTV / TiviMate / Kodi / 电视家类自定义壳）、电脑（PotPlayer / VLC）或手机浏览器中可直接使用以下地址：
+
+* **Web 状态监控面板**（实时查看在线客户端、码率、FCC/组播状态）：  
+  `http://192.168.1.1:4022/status`
+* **免装软件网页直接看电视**（内置现代 Web 播放器，自动解析 M3U 频道列表）：  
+  `http://192.168.1.1:4022/player`
+* **通用播放器 M3U 订阅链接**（自动转换生成单播地址，推荐直接导入客户端）：  
+  `http://192.168.1.1:4022/playlist.m3u`
+* **单频道兼容格式**（完全兼容传统 `udpxy` / `msd_lite` 路径）：  
+  `http://192.168.1.1:4022/rtp/239.77.0.174:5146`
+
+---
+
+### 第六步：常见黑屏/无画面排障命令（SSH）
+
+```bash
+# 1. 确认 rtp2httpd 服务进程与 4022 端口监听正常（应有 4 个 worker 进程）
+ps w | grep rtp2httpd
+netstat -lntup | grep 4022
+
+# 2. 验证 Web 监控与 M3U 聚合接口是否返回 200 / 频道数据
+wget -qO- http://127.0.0.1:4022/playlist.m3u | head -n 10
+
+# 3. 检查 rtp2httpd 运行日志（换台时若报错会直接打印权限/接口/超时原因）
+logread | grep -i rtp2httpd
+
+# 4. 播放频道时观察 IPTV VLAN 接口接收字节（RX bytes 应以数 MB/s 持续增长）
+ip -s link show pon0.45
+
+# 5. 检查 /www/iptv.m3u 中 IP 是否与当前网关 LAN IP 一致（不含 /24 后缀）
+head -n 6 /www/iptv.m3u
+```
+
+* **常见排查结论对照**：
+  * `pon0.45` 无 RX 数据增长 → 先确认 `pondctl status --line line0` 含该 VLAN、检查防火墙是否放行 `Allow-IGMP` 与 `224.0.0.0/4` UDP、确认当地是否需要 DHCP Option 60 鉴权或 `iptv` 接口未 UP。
+  * `pon0.45` 有流量但播放黑屏/卡住 → 检查 `rtp2httpd` 的 `upstream_interface` 是否选对接口；检查 `net.ipv4.conf.all.rp_filter` 是否为 `0`（固件已默认置 `0`）。
+  * 配好 IPTV 后宽带无法上网 → 检查 `iptv` 的 DHCP 客户端是否忘记取消勾选 **“使用默认网关”**（导致默认路由被 IPTV 专网劫持）。
+
+---
+
 ## 🚀 Sing-Box 原生 `auto-redirect` 配置示例
 
 固件内置的 `nfnetlink_queue` 驱动可直接支持 Sing-Box 的原生透明重定向。
@@ -348,5 +458,5 @@ make -j$(nproc) || make -j1 || make -j1 V=s
 - **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)**：新一代高性能网络代理核心。
 - **[nikkinikki-org/OpenWrt-momo](https://github.com/nikkinikki-org/OpenWrt-momo)**：极简高效的 OpenWrt sing-box 透明网关前端与控制面板。
 - **[rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)**：达发 AN7581 独立 8 核 RISC-V NPU / PPE 运行状态与硬件流表监控看板。
-- **[rozhuk-im/msd_lite](https://github.com/rozhuk-im/msd_lite)**：超轻量、高通量 4K/8K IPTV 组播转单播 HTTP 代理服务器。
+- **[stackia/rtp2httpd](https://github.com/stackia/rtp2httpd)**：高性能零拷贝 4K/8K IPTV 组播转单播、FCC 快速切台与 RTSP 代理引擎，附带现代 Web 播放器与状态监控面板。
 - **[VizzleTF/luci-theme-footstrap](https://github.com/VizzleTF/luci-theme-footstrap)**：专为 PonWrt 适配的清爽现代响应式主题。

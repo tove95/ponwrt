@@ -71,7 +71,22 @@ EOF
 
 # 2. 预置 rtp2httpd 高性能组播/RTSP/FCC 代理参数 (接管 port 4022，兼容 /www/iptv.m3u 与 udpxy 路径格式)
 if [ -f /etc/config/rtp2httpd ]; then
-    uci -q batch <<EOF
+    if uci -q get rtp2httpd.@rtp2httpd[0] >/dev/null; then
+        uci -q batch <<EOF
+set rtp2httpd.@rtp2httpd[0].disabled='0'
+set rtp2httpd.@rtp2httpd[0].respawn='1'
+del rtp2httpd.@rtp2httpd[0].listen
+add_list rtp2httpd.@rtp2httpd[0].listen='0.0.0.0:4022'
+add_list rtp2httpd.@rtp2httpd[0].listen='[::]:4022'
+set rtp2httpd.@rtp2httpd[0].workers='4'
+set rtp2httpd.@rtp2httpd[0].maxclients='20'
+set rtp2httpd.@rtp2httpd[0].buffer_pool_max_size='16384'
+set rtp2httpd.@rtp2httpd[0].udp_rcvbuf_size='2097152'
+set rtp2httpd.@rtp2httpd[0].external_m3u='file:///www/iptv.m3u'
+commit rtp2httpd
+EOF
+    elif uci -q get rtp2httpd.@instance[0] >/dev/null; then
+        uci -q batch <<EOF
 set rtp2httpd.@instance[0].enabled='1'
 del_list rtp2httpd.@instance[0].listen='0.0.0.0:5140'
 del_list rtp2httpd.@instance[0].listen='[::]:5140'
@@ -82,8 +97,10 @@ set rtp2httpd.@instance[0].workers='4'
 set rtp2httpd.@instance[0].maxclients='20'
 set rtp2httpd.@instance[0].buffer_pool_max_size='16384'
 set rtp2httpd.@instance[0].udp_rcvbuf_size='2097152'
+set rtp2httpd.@instance[0].external_m3u='file:///www/iptv.m3u'
 commit rtp2httpd
 EOF
+    fi
 fi
 
 if [ -f /etc/config/msd_lite ]; then
@@ -170,9 +187,9 @@ chmod +x /etc/hotplug.d/iface/90-ipv6-fix 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/95-iptv-m3u-ip 2>/dev/null || true
 
 # 首次启动时自动将 /www/iptv.m3u 中的播放地址同步为当前 LAN IP
-LAN_IP=$(uci -q get network.lan.ipaddr)
+LAN_IP=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
 if [ -n "$LAN_IP" ] && [ -f /www/iptv.m3u ]; then
-    sed -i "s|http://[0-9.]*:4022/rtp/|http://${LAN_IP}:4022/rtp/|g" /www/iptv.m3u 2>/dev/null
+    sed -i -E "s|http://[0-9.]+(/[0-9]+)?:4022/rtp/|http://${LAN_IP}:4022/rtp/|g" /www/iptv.m3u 2>/dev/null
 fi
 
 # 5. 优化开机 rc.local：高通量 IPTV UDP 核心参数、网卡队列深度与有线网口组播直通
