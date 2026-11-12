@@ -236,10 +236,12 @@ if [ -f /etc/init.d/momo ]; then
 fi
 mkdir -p /etc/momo/profiles
 
-# 确保热插拔网卡脚本拥有执行权限
+# 确保热插拔与系统调优脚本拥有执行权限
 chmod +x /etc/hotplug.d/net/99-multicast 2>/dev/null || true
+chmod +x /etc/hotplug.d/net/99-wifi-affinity 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/90-ipv6-fix 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/95-iptv-m3u-ip 2>/dev/null || true
+chmod +x /usr/sbin/pin-wifi-cpus.sh 2>/dev/null || true
 
 # 首次启动时自动将 /www/iptv.m3u 中的播放地址同步为当前 LAN IP
 LAN_IP=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
@@ -272,6 +274,11 @@ echo 0 > /sys/devices/virtual/net/br-lan/bridge/multicast_snooping 2>/dev/null
 for eth_port in /sys/devices/virtual/net/br-lan/brif/lan* /sys/devices/virtual/net/br-lan/brif/eth* /sys/devices/virtual/net/br-lan/brif/pon*; do
     [ -d "$eth_port" ] && echo 2 > "$eth_port/multicast_router" 2>/dev/null
 done
+
+# 5. 绑定以太网硬中断与 Wi-Fi 四核收发线程亲和性（IRQ 17->CPU1, IRQ 21->CPU2；mt76-tx->CPU3，napi/phy0-0 打散至 CPU0/1/2）
+echo 1 > /proc/irq/17/smp_affinity_list 2>/dev/null
+echo 2 > /proc/irq/21/smp_affinity_list 2>/dev/null
+[ -x /usr/sbin/pin-wifi-cpus.sh ] && /usr/sbin/pin-wifi-cpus.sh
 
 exit 0
 RCLOCAL
@@ -316,8 +323,8 @@ set cpufreq.cpufreq=settings
 set cpufreq.cpufreq.governor0='ondemand'
 set cpufreq.cpufreq.minfreq0='500000'
 set cpufreq.cpufreq.maxfreq0='1200000'
-set cpufreq.cpufreq.sdfactor0='10'
-set cpufreq.cpufreq.upthreshold0='50'
+set cpufreq.cpufreq.sdfactor0='4'
+set cpufreq.cpufreq.upthreshold0='70'
 set cpufreq.global=settings
 set cpufreq.global.set='1'
 commit cpufreq

@@ -144,19 +144,19 @@ jobs:
               - **烽火/中移 ZN504XG-D**：纯有线 2.5G 高性能光猫（AN7581 + EN8811H 2.5G 网口）
               - **烽火 HG5585F (CT 电信标准版)**：带 Wi-Fi 6 (MT7916D DBDC AX3000 + NPU WED 硬件加速，标准原生 USB 2.0 硬件配置)
             * **后台管理**：`192.168.1.1`（用户名: `root`，默认无密码）
-            * **Wi-Fi 7 / 6 特性 (HG5585F)**：
+            * **Wi-Fi 6 / 四核无线亲和性调优 (HG5585F)**：
               - 集成 MediaTek MT7916 驱动与 NPU WED 硬件加速固件 (`en7581_MT7916_npu_rv32.bin`)
               - 预置板载 factory 8192 偏移校准与 `07_an7581_bsp_wifi_mac` 独立 MAC 算号
               - 预置 `SingleSKU` 与 `mt7916-sku.dat` 射频功率校准表
+              - **Wi-Fi 四核无线线程绑核与以太网硬中断亲和性** (`/usr/sbin/pin-wifi-cpus.sh` + `/etc/hotplug.d/net/99-wifi-affinity`)：`mt76-tx*` 独占 `CPU3`，`napi/phy0-0` 均衡打散至 `CPU0/1/2`，有线硬中断绑定 `IRQ 17->CPU1`、`IRQ 21->CPU2`（实测 5G Wi-Fi iPerf3 稳定 **1144 Mbps 下行 / 1200 Mbps 上行**）
             * **核心网络与实时音视频保序优化**：
-              - 默认关闭 Flowtable 流卸载（`flow_offloading='0'`），彻底根治 Netfilter `nf_flowtable_udp_timeout=30s` 造成的微信视频/VoIP实时长连接周期性断流
-              - 默认关闭多核 `packet_steering`，避免 AN7581 多核乱序导致实时 UDP/RTP 抖动
+              - 实测保持关闭 Flowtable 流卸载（`flow_offloading='0'` / `flow_offloading_hw='0'`）与多核 `packet_steering='0'`，根除 `nf_flowtable_udp_timeout=30s` 微信视频/VoIP 断流与乱序，并避免 `packet_steering` 将 Wi-Fi 5G 下行压低至 `559–673 Mbps` 或干扰 IPv6 CDN 吞吐
               - 启用 Momo 纯核心模式（`core_only='1'`）搭配内核 NFQUEUE，完整遵循用户 `sing-box` 订阅规则及原生 `auto_redirect` + `bypass` 零拷贝直连
               - 网桥放行 LLDP (0x4000)，杜绝下挂 AP 组播心跳导致网桥丢包统计异常
               - 移植 QWRT 内存防碎片参数 (`vm.percpu_pagelist_high_fraction = 128`)，提升高通量多核并发页面分配效率
               - 移植 QWRT SSDP (`239.255.255.250:1900`) 与 WSD (`3702`) `NOTRACK` 局域网广播旁路，防止连接跟踪表与交换芯片 CDM 队列膨胀
-              - 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈
-              - 解锁 AN7581 4 核 1.2GHz 动态满频调频，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
+              - 统一对齐 `16MB` (`16777216`) TCP/UDP 核心与套接字缓冲区（`99-custom-net-optimization.conf` 与 `30-network-buffers.conf`），防止热插拔重载回退，彻底消除高带宽长肥管道瓶颈
+              - 温和 `ondemand` 动态睿频调度（`500–1200 MHz`，`upthreshold0='70'`、`sdfactor0='4'`），空闲快速回落至 ~`650 MHz` 有效控温，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
             * **集成 QWRT 核心硬件特性**：
               - Airoha AN7581 NPU / PPE 硬件流量转发加速 (`luci-app-airoha-npu`, `luci-app-hqos`)
               - CPU 调频策略与频率管理 (`luci-app-cpufreq`)
@@ -172,7 +172,7 @@ jobs:
               - 响应式 Footstrap 主题与完整 LuCI 简体中文语言包
             * **集成 LeoooChen 项目精华**：
               - XG-PON 线路与 PPPoE 线速硬件流量卸载（千兆带宽 CPU 占用低至约 4.5%）
-              - 8MB 高通量网络与 IPTV 环形缓冲区调优，杜绝 4K/8K 组播与突发丢包
+              - 16MB 高通量网络与 IPTV 环形缓冲区调优，杜绝 4K/8K 组播与突发丢包
             * **电信 4K/8K IPTV 开箱即用 (`br-iptv` + `rtp2httpd`)**：
               - 首启自动构建异 VLAN 隔离网桥 `br-iptv`（`pon0.45` IGMP 上行 + `pon0.50` 组播下行，启用 `netifd` 原生 `bridge-port isolate='1'` 防二层环路反射）与 `169.254.50.2/24` 无默认路由 `iptv` 接口及专属 `iptv` 防火墙规则
               - `rtp2httpd` 默认纯端口 `4022` 双栈监听（修复 LuCI 状态/播放器按钮跳转 `0.0.0.0` 问题），上游默认绑定 `br-iptv`，内置 `/www/iptv.m3u` 与 `/playlist.m3u` 订阅入口

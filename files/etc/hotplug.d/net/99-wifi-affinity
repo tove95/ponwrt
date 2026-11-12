@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ "$ACTION" = "add" ]; then
+    case "$DEVICENAME" in
+        phy*-ap0)
+            /usr/sbin/pin-wifi-cpus.sh
+            ;;
+    esac
+fi

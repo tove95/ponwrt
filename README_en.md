@@ -25,6 +25,7 @@ Every release automatically compiles and packages **both devices** into separate
 - **Automated Factory EEPROM Extraction**: Integrated `/etc/hotplug.d/firmware/10-mt7916-an-eeprom` and `/etc/init.d/mt7916-an-eeprom` (executed at `START=08` prior to driver probing). Extracts the 4KB calibration block from UBI `factory` offset `0x1000` and validates the `0x7916` magic bytes.
 - **Preinit Wireless MAC Calculation**: Embedded `/lib/preinit/07_an7581_bsp_wifi_mac` automatically reads the base MAC and assigns 2.4G (`base + 6`) and 5G (`base + 7`) hardware addresses.
 - **RF Power Tables**: Integrated `SingleSKU` and `mt7916-sku.dat` beamforming data.
+- **4-Core Wi-Fi Thread & Ethernet IRQ Affinity (`/usr/sbin/pin-wifi-cpus.sh` + `/etc/hotplug.d/net/99-wifi-affinity`)**: Pins `mt76-tx*` to `CPU3` and spreads the 6 `napi/phy0-0` RX workers (`0,0,0,1,2,2`) across `CPU0 / CPU1 / CPU2`, alongside wired Ethernet hard IRQ affinity (`IRQ 17 -> CPU1`, `IRQ 21 -> CPU2`), eliminating single-core SoftIRQ bottlenecks; benchmarked on HG5585F 5G Wi-Fi iPerf3 (5 streams) at **1144 Mbps Downlink / 1200 Mbps Uplink** (peak **1314+ Mbps**).
 - **Async Wi-Fi Scan Protection**: Integrated `rpcd` async scanning patch (`133-rpcd-async-scan.patch`), decoupling wireless discovery from the main event loop to prevent LuCI Web UI stalls or 504 timeouts during channel surveys.
 
 ### 2. Full-Stack Airoha AN7581 Native PON Drivers & OLT Hardening
@@ -39,14 +40,13 @@ Every release automatically compiles and packages **both devices** into separate
 - **Clean Network Generation**: Prevents redundant `wan6` DHCPv6 interface creation on DHCP networks to avoid dual-stack route competition.
 - Live telemetry for Rx/Tx optical power, operating voltage, and SoC temperature.
 
-### 3. Core Routing & Real-Time Audio/Video Zero-Stutter Optimization
-- Flowtable offloading disabled by default (`flow_offloading='0'`, `flow_offloading_hw='0'`): Completely eliminates Netfilter's `nf_flowtable_udp_timeout = 30s` periodic stalls on WeChat video / VoIP UDP streams. Quad-core A53 CPU easily forwards Gigabit traffic with <15% CPU load.
-- Multi-core `packet_steering` disabled: Prevents out-of-order UDP packet delivery on real-time RTP multimedia streams.
-- Bridge multicast forwarding optimization (`group_fwd_mask = 0x4000`): Forwards link-layer LLDP frames, preventing false `rx_dropped` alarms from downstream APs.
-- Backported QWRT memory anti-fragmentation optimization (`vm.percpu_pagelist_high_fraction = 128`), preventing high-concurrency page allocation stalls.
-- LAN Multicast Bypass (`NOTRACK`): UPnP SSDP (`239.255.255.250:1900`) and Windows WSD (`3702`) bypass conntrack, preventing table exhaustion.
-- 16MB TCP socket read/write buffers (`rmem_max` / `wmem_max = 16M`), eliminating long-fat network bottlenecks for 4K streaming.
-- Dynamic 1.2GHz full-frequency scaling (500MHz idle efficiency, 1.2GHz instant boost).
+### 3. Core Routing, Benchmarked Exclusions & Thermal Tuning
+- **Flowtable & Packet Steering Intentionally Disabled (`0`)**: Keeps `flow_offloading='0'`, `flow_offloading_hw='0'`, and `packet_steering='0'` (without `rps_sock_flow_entries`). Beyond preventing Netfilter's `nf_flowtable_udp_timeout = 30s` stalls and UDP reordering on WeChat video / VoIP calls, benchmarking confirmed enabling `packet_steering` / `flow_offloading` regresses IPv6 CDN / loaded-latency (`networkQuality`) performance and cuts 5G Wi-Fi downlink to `559–673 Mbps`.
+- **Bridge multicast forwarding optimization (`group_fwd_mask = 0x4000`)**: Forwards link-layer LLDP frames, preventing false `rx_dropped` alarms from downstream APs.
+- **Backported QWRT memory anti-fragmentation optimization (`vm.percpu_pagelist_high_fraction = 128`)**, preventing high-concurrency page allocation stalls.
+- **LAN Multicast Bypass (`NOTRACK`)**: UPnP SSDP (`239.255.255.250:1900`) and Windows WSD (`3702`) bypass conntrack, preventing table exhaustion.
+- **Unified 16MB TCP/UDP Buffers**: Aligns `99-custom-net-optimization.conf` and `30-network-buffers.conf` to `16777216` (`16MB`) so hotplug/boot sysctl reloads never revert buffers back to 8MB.
+- **Gentle `ondemand` CPUFreq Scaling**: `500–1200 MHz` with **`upthreshold0='70'`** and **`sdfactor0='4'`**, rapidly dropping idle frequency to ~`650 MHz` for cooler thermals (~`68.8°C` post-load) while boosting smoothly to `1.2 GHz` under heavy traffic.
 
 ### 4. Kernel Netfilter NFQUEUE Integration (Native Sing-Box `auto-redirect`)
 - Compiled and integrated `kmod-nfnetlink-queue`, `kmod-nft-queue`, and `kmod-ipt-nfqueue`.

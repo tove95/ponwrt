@@ -25,6 +25,7 @@
 - **工厂 EEPROM 校准自动提取**：内置 `/etc/hotplug.d/firmware/10-mt7916-an-eeprom` 与 `/etc/init.d/mt7916-an-eeprom`（在 `kmodloader` 加载驱动前于 `START=08` 执行），开机自动从 UBI `factory` 分区的 `0x1000` 偏移处提取 4KB 射频校准数据，校验 `0x7916` 硬件魔数并无缝提供给驱动。
 - **独立 MAC 地址算号机制**：内置 `/lib/preinit/07_an7581_bsp_wifi_mac`，开机预初始化阶段自动从 `factory` 分区读取基准 MAC 并计算 2.4G (`base + 6`) 与 5G (`base + 7`) 独立合法硬件地址。
 - **射频功率校准表**：预置 `SingleSKU` 与 `mt7916-sku.dat` / `mt7916-sku-bf.dat` 波束成形数据。
+- **Wi-Fi 四核收发线程精准绑核 (`/usr/sbin/pin-wifi-cpus.sh` + `/etc/hotplug.d/net/99-wifi-affinity`)**：按进程 `comm` 名称将 `mt76-tx*` 发送线程锁定至 `CPU3`，并将 6 个 `napi/phy0-0` 收包线程按 `0,0,0,1,2,2` 均衡分布至 `CPU0 / CPU1 / CPU2`，结合有线硬中断亲和性（`IRQ 17 -> CPU1`、`IRQ 21 -> CPU2`），彻底消除单核软中断拥塞；实测 HG5585F 5G Wi-Fi iPerf3 5 线程稳定 **1144 Mbps 下行 / 1200 Mbps 上行**（峰值 **1314+ Mbps**）。
 - **异步无线扫描防卡死机制**：集成 `rpcd` 异步信道扫描补丁（`133-rpcd-async-scan.patch`），将长耗时的 Wi-Fi 信道扫描任务从主事件循环解耦并放入子进程与延迟请求队列，彻底杜绝在 LuCI 界面点击扫描周围无线 AP 时造成的 Web 控制台无响应与 504 Gateway Timeout。
 
 ### 2. Airoha AN7581 原生 PON 光猫全栈驱动与局端兼容性增强
@@ -39,14 +40,13 @@
 - **纯净网络配置生成**：修复并移除 `config_generate` 为 DHCP 网络自动生成冗余 `wan6` 客户端接口的逻辑，杜绝桥接与双栈网络下的 DHCPv6 广播风暴与接口路由冲突。
 - 实时光功率（接收/发射）、供电电压、芯片温度检测与全链路遥测告警。
 
-### 3. 核心路由与实时音视频零丢包优化（微信视频/VoIP保序）
-- 默认关闭 Flowtable 流卸载（`flow_offloading='0'`，`flow_offloading_hw='0'`）：彻底根除 Linux 内核流表 `nf_flowtable_udp_timeout = 30s` 造成的微信视频/VoIP实时长连接周期性断流卡死与 UDP 乱序，Airoha AN7581 4 核 1.2GHz A53 强大算力由原生网络栈全速转发，千兆满速 CPU 占用低于 15%。
-- 默认关闭多核 `packet_steering`：避免多核哈希导致实时 UDP/RTP 音视频数据包乱序到达。
-- 网桥组播放行优化（`group_fwd_mask = 0x4000`）：原生放行链路层 LLDP 报文，彻底避免下挂 AP（如 WTA302）组播探针被网桥丢弃产生的 `rx_dropped` 误报警。
-- 移植 QWRT 内存防碎片参数（`vm.percpu_pagelist_high_fraction = 128`）：深度优化单核 page 列表阈值，彻底杜绝 4 核并发高吞吐下的物理内存碎片与分配延迟。
-- 局域网广播免连接跟踪（`NOTRACK`）：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
-- 预置 16MB 万兆 TCP 读写套接字大缓冲区 (`rmem_max` / `wmem_max = 16M`)，彻底消除高带宽长肥管道瓶颈，提升 4K 串流与并发吞吐。
-- 解锁 AN7581 4 核 1.2GHz 动态满频算力（空闲 500MHz 极度省电清凉，重载秒升 1.2GHz）。
+### 3. 核心路由、实测排障优化与温控策略
+- **实测验证保持禁用 Flowtable 与 Packet Steering**：明确保持 `flow_offloading='0'`、`flow_offloading_hw='0'` 与 `packet_steering='0'`（且不注入 `rps_sock_flow_entries`）。一方面根除 `nf_flowtable_udp_timeout = 30s` 造成的微信视频/VoIP 实时长连接断流与 UDP 乱序；另一方面实测表明开启 `packet_steering` / `flow_offloading` 不仅会造成 IPv6 CDN 测速与高负载延迟（`networkQuality`）劣化，还会破坏 MT7916 四核绑核分布并使 5G Wi-Fi 下行跌落至 `559–673 Mbps`。
+- **网桥组播放行优化（`group_fwd_mask = 0x4000`）**：原生放行链路层 LLDP 报文，彻底避免下挂 AP（如 WTA302）组播探针被网桥丢弃产生的 `rx_dropped` 误报警。
+- **移植 QWRT 内存防碎片参数（`vm.percpu_pagelist_high_fraction = 128`）**：深度优化单核 page 列表阈值，彻底杜绝 4 核并发高吞吐下的物理内存碎片与分配延迟。
+- **局域网广播免连接跟踪（`NOTRACK`）**：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
+- **统一 16MB TCP/UDP 套接字与内核缓冲区**：将 `99-custom-net-optimization.conf` 与 `30-network-buffers.conf` 全部统一至 `16777216` (`16MB`)，消除热插拔或 `rc.local` 重载 `sysctl` 时从 16MB 回退至 8MB 的隐患，兼顾 4K 串流与代理高并发吞吐。
+- **温和 `ondemand` 动态睿频与温控平衡**：`500MHz ~ 1200MHz` 配合 **`upthreshold0='70'`**、**`sdfactor0='4'`**，避免系统微负载长期顶在 1.2GHz；实测高负载结束数秒内即可快速降频至 `650MHz` 稳步降温（~`68.8°C`），同时不影响突发千兆转发与无线吞吐。
 
 ### 4. 内核级 Netfilter NFQUEUE 支持（原生支持 Sing-Box `auto-redirect`）
 - 编译并集成 `kmod-nfnetlink-queue`、`kmod-nft-queue` 及 `kmod-ipt-nfqueue` 内核模块。
