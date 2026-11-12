@@ -41,7 +41,7 @@
 - 实时光功率（接收/发射）、供电电压、芯片温度检测与全链路遥测告警。
 
 ### 3. 核心路由、实测排障优化与温控策略
-- **实测验证保持禁用 Flowtable 与 Packet Steering**：明确保持 `flow_offloading='0'`、`flow_offloading_hw='0'` 与 `packet_steering='0'`（且不注入 `rps_sock_flow_entries`）。一方面根除 `nf_flowtable_udp_timeout = 30s` 造成的微信视频/VoIP 实时长连接断流与 UDP 乱序；另一方面实测表明开启 `packet_steering` / `flow_offloading` 不仅会造成 IPv6 CDN 测速与高负载延迟（`networkQuality`）劣化，还会破坏 MT7916 四核绑核分布并使 5G Wi-Fi 下行跌落至 `559–673 Mbps`。
+- **实测验证保持禁用 Flowtable 与 Packet Steering**：明确保持 `flow_offloading='0'`、`flow_offloading_hw='0'` 与 `packet_steering='0'`，并直接停用 `/etc/init.d/packet_steering` 服务（且不注入 `rps_sock_flow_entries`）。一方面根除 `nf_flowtable_udp_timeout = 30s` 造成的微信视频/VoIP 实时长连接断流与 UDP 乱序；另一方面实测表明开启 `packet_steering` / `flow_offloading` 不仅会造成 IPv6 CDN 测速与高负载延迟（`networkQuality`）劣化，其内置 `packet-steering.uc` 在接口重载时还会把 `napi/phy0-0` 四核绑核冲回 `0-3`（或锁入单核），使 5G Wi-Fi 下行跌落至 `559–673 Mbps`。
 - **网桥组播放行优化（`group_fwd_mask = 0x4000`）**：原生放行链路层 LLDP 报文，彻底避免下挂 AP（如 WTA302）组播探针被网桥丢弃产生的 `rx_dropped` 误报警。
 - **移植 QWRT 内存防碎片参数（`vm.percpu_pagelist_high_fraction = 128`）**：深度优化单核 page 列表阈值，彻底杜绝 4 核并发高吞吐下的物理内存碎片与分配延迟。
 - **局域网广播免连接跟踪（`NOTRACK`）**：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。

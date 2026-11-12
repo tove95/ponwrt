@@ -1,11 +1,15 @@
 #!/bin/sh
 
-# 1. 基础网络调优与封包防乱序（禁用 packet_steering 确保多核 UDP 报文保序，显式禁用网桥 igmp_snooping 确保开机原生放行 IPv6 NDP 邻居发现与 IPTV 组播）
+# 1. 基础网络调优与封包防乱序（禁用 packet_steering 配置与服务以防重载时覆盖 Wi-Fi 四核绑核并确保多核 UDP 保序，显式禁用网桥 igmp_snooping 确保开机原生放行 IPv6 NDP 邻居发现与 IPTV 组播）
 uci -q batch <<EOF
 set network.globals.packet_steering='0'
 set network.@device[0].igmp_snooping='0'
 commit network
 EOF
+if [ -f /etc/init.d/packet_steering ]; then
+    /etc/init.d/packet_steering disable 2>/dev/null || true
+    /etc/init.d/packet_steering stop 2>/dev/null || true
+fi
 
 # 1.1 关闭 Firewall4 软件与硬件 PPE 流卸载（彻底根治内核 flowtable nf_flowtable_udp_timeout=30s 造成的微信视频/VoIP实时长连接周期性断流与乱序），补全 wan_6 动态接口
 uci -q batch <<EOF

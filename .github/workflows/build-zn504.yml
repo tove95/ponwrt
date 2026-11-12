@@ -150,7 +150,7 @@ jobs:
               - 预置 `SingleSKU` 与 `mt7916-sku.dat` 射频功率校准表
               - **Wi-Fi 四核无线线程绑核与以太网硬中断亲和性** (`/usr/sbin/pin-wifi-cpus.sh` + `/etc/hotplug.d/net/99-wifi-affinity`)：`mt76-tx*` 独占 `CPU3`，`napi/phy0-0` 均衡打散至 `CPU0/1/2`，有线硬中断绑定 `IRQ 17->CPU1`、`IRQ 21->CPU2`（实测 5G Wi-Fi iPerf3 稳定 **1144 Mbps 下行 / 1200 Mbps 上行**）
             * **核心网络与实时音视频保序优化**：
-              - 实测保持关闭 Flowtable 流卸载（`flow_offloading='0'` / `flow_offloading_hw='0'`）与多核 `packet_steering='0'`，根除 `nf_flowtable_udp_timeout=30s` 微信视频/VoIP 断流与乱序，并避免 `packet_steering` 将 Wi-Fi 5G 下行压低至 `559–673 Mbps` 或干扰 IPv6 CDN 吞吐
+              - 实测保持关闭 Flowtable 流卸载（`flow_offloading='0'` / `flow_offloading_hw='0'`）与多核 `packet_steering='0'` 并停用 `/etc/init.d/packet_steering` 服务，根除 `nf_flowtable_udp_timeout=30s` 微信视频/VoIP 断流与乱序，并防止接口重载覆盖 `napi/phy0-0` 四核绑核或将 Wi-Fi 5G 下行压低至 `559–673 Mbps`、干扰 IPv6 CDN 吞吐
               - 启用 Momo 纯核心模式（`core_only='1'`）搭配内核 NFQUEUE，完整遵循用户 `sing-box` 订阅规则及原生 `auto_redirect` + `bypass` 零拷贝直连
               - 网桥放行 LLDP (0x4000)，杜绝下挂 AP 组播心跳导致网桥丢包统计异常
               - 移植 QWRT 内存防碎片参数 (`vm.percpu_pagelist_high_fraction = 128`)，提升高通量多核并发页面分配效率
