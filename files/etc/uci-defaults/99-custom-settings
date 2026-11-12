@@ -69,23 +69,26 @@ EOF
 
 
 
-# 2. 预置 msd_lite 高性能 4K/8K 环形大缓存参数 (8MB 环形接收缓存 + 2MB 预加载加速 + 5s 组播接收超时，接管 port 4022)
-if [ -f /etc/config/msd_lite ]; then
+# 2. 预置 rtp2httpd 高性能组播/RTSP/FCC 代理参数 (接管 port 4022，兼容 /www/iptv.m3u 与 udpxy 路径格式)
+if [ -f /etc/config/rtp2httpd ]; then
     uci -q batch <<EOF
-set msd_lite.@instance[0].enabled='1'
-del_list msd_lite.@instance[0].address='0.0.0.0:7088'
-del_list msd_lite.@instance[0].address='[::]:7088'
-add_list msd_lite.@instance[0].address='0.0.0.0:4022'
-add_list msd_lite.@instance[0].address='[::]:4022'
-set msd_lite.@instance[0].network='lan'
-set msd_lite.@instance[0].precache_size='2048'
-set msd_lite.@instance[0].ring_buffer_size='8192'
-set msd_lite.@instance[0].multicast_recv_buffer_size='2048'
-set msd_lite.@instance[0].drop_slow_clients='1'
-set msd_lite.@instance[0].threads='4'
-set msd_lite.@instance[0].multicast_recv_timeout='5'
-commit msd_lite
+set rtp2httpd.@instance[0].enabled='1'
+del_list rtp2httpd.@instance[0].listen='0.0.0.0:5140'
+del_list rtp2httpd.@instance[0].listen='[::]:5140'
+add_list rtp2httpd.@instance[0].listen='0.0.0.0:4022'
+add_list rtp2httpd.@instance[0].listen='[::]:4022'
+set rtp2httpd.@instance[0].noudpxy='0'
+set rtp2httpd.@instance[0].workers='4'
+set rtp2httpd.@instance[0].maxclients='20'
+set rtp2httpd.@instance[0].buffer_pool_max_size='16384'
+set rtp2httpd.@instance[0].udp_rcvbuf_size='2097152'
+commit rtp2httpd
 EOF
+fi
+
+if [ -f /etc/config/msd_lite ]; then
+    uci -q set msd_lite.@instance[0].enabled='0'
+    uci -q commit msd_lite
 fi
 
 if [ -f /etc/config/udpxy ]; then
@@ -206,10 +209,9 @@ uci set system.@system[0].zram_size_mb='256'
 uci set system.@system[0].zram_comp_algo='zstd'
 uci commit system
 
-# 7. 每日凌晨 04:30 自动执行 ZRAM 内存空洞压缩整理（紧跟 04:00 momo 定时重启之后），并清理 msd_lite 日志防爆内存
+# 7. 每日凌晨 04:30 自动执行 ZRAM 内存空洞压缩整理（紧跟 04:00 momo 定时重启之后）
 mkdir -p /etc/crontabs
 (crontab -l 2>/dev/null | grep -v 'compact'; echo "30 4 * * * echo 1 > /sys/block/zram0/compact 2>/dev/null") | crontab -
-(crontab -l 2>/dev/null | grep -v 'msd_lite'; echo '0 2 * * * echo "" > /tmp/log/msd_lite.log 2>/dev/null') | crontab -
 
 # 8. QWRT 经典性能调优：iperf3 测速绑定 Core 3、wget 证书防抖、dnsmasq 降噪
 sed -i '/iperf3=/d' /etc/profile 2>/dev/null
