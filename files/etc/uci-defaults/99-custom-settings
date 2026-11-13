@@ -285,13 +285,27 @@ echo 1 > /proc/irq/17/smp_affinity_list 2>/dev/null
 echo 2 > /proc/irq/21/smp_affinity_list 2>/dev/null
 [ -x /usr/sbin/pin-wifi-cpus.sh ] && /usr/sbin/pin-wifi-cpus.sh
 
-# 6. 精细化 CPUFreq ondemand 功耗与温控调度（75%门限、驻留倍数1立即回落、10%节电偏置激活中间频阶、忽略低优后台负载）
+# 6. 精细化 CPUFreq ondemand / conservative 功耗与温控调度
+# ondemand: 75%门限、驻留倍数1立即回落、10%节电偏置激活中间频阶、忽略低优后台负载
 if [ -d /sys/devices/system/cpu/cpufreq/ondemand ]; then
     echo 75 > /sys/devices/system/cpu/cpufreq/ondemand/up_threshold 2>/dev/null
     echo 1 > /sys/devices/system/cpu/cpufreq/ondemand/sampling_down_factor 2>/dev/null
     echo 100 > /sys/devices/system/cpu/cpufreq/ondemand/powersave_bias 2>/dev/null
     echo 1 > /sys/devices/system/cpu/cpufreq/ondemand/ignore_nice_load 2>/dev/null
     echo 0 > /sys/devices/system/cpu/cpufreq/ondemand/io_is_busy 2>/dev/null
+fi
+# conservative: 10%快速阶跃(消除爬频顿挫)、70%升频门限、30%降频门限、倍数2平滑过渡、忽略低优负载
+if [ -d /sys/devices/system/cpu/cpufreq/conservative ]; then
+    echo 10 > /sys/devices/system/cpu/cpufreq/conservative/freq_step 2>/dev/null
+    echo 70 > /sys/devices/system/cpu/cpufreq/conservative/up_threshold 2>/dev/null
+    echo 30 > /sys/devices/system/cpu/cpufreq/conservative/down_threshold 2>/dev/null
+    echo 2 > /sys/devices/system/cpu/cpufreq/conservative/sampling_down_factor 2>/dev/null
+    echo 1 > /sys/devices/system/cpu/cpufreq/conservative/ignore_nice_load 2>/dev/null
+fi
+
+# 7. 调优 PPE 流表硬件加速触发门限（降至 5 pps，加速常规数据流流表直转，彻底释放 CPU CDM1 队列拥塞）
+if [ -w /sys/kernel/debug/ppe/bind_rate ]; then
+    echo "5 5" > /sys/kernel/debug/ppe/bind_rate 2>/dev/null
 fi
 
 exit 0
@@ -330,15 +344,15 @@ elif [ -x /usr/sbin/restore-fiberhome-pon.sh ] && [ ! -s /etc/config/pon ] && [ 
 fi
 
 # 10. CPU 睿频动态调度与轻量化内存释放
-# 解锁 AN7581 4核 1.2GHz 满频算力（空闲 500MHz，重载 1.2GHz 瞬间拉升）
+# 默认采用精细化调优的 conservative 调度器（阶跃 10%、门限 70%/30%、低温平滑），空闲 500MHz，重载 1.2GHz
 if [ -f /etc/config/cpufreq ]; then
     uci -q batch <<EOF
 set cpufreq.cpufreq=settings
-set cpufreq.cpufreq.governor0='ondemand'
+set cpufreq.cpufreq.governor0='conservative'
 set cpufreq.cpufreq.minfreq0='500000'
 set cpufreq.cpufreq.maxfreq0='1200000'
-set cpufreq.cpufreq.sdfactor0='1'
-set cpufreq.cpufreq.upthreshold0='75'
+set cpufreq.cpufreq.sdfactor0='2'
+set cpufreq.cpufreq.upthreshold0='70'
 set cpufreq.global=settings
 set cpufreq.global.set='1'
 commit cpufreq
@@ -381,13 +395,16 @@ set firewall.wsd_ipv6_notrack.target='NOTRACK'
 commit firewall
 EOF
 
-# 扩大 TCP 读写套接字缓冲区至 16MB，消除大带宽长肥管道瓶颈，提升 4K 串流与并发吞吐
+# 扩大 TCP 读写套接字缓冲区至 16MB 并扩容网络队列，消除万兆大带宽长肥管道瓶颈与软中断突发丢包
 mkdir -p /etc/sysctl.d
 cat <<'EOF' > /etc/sysctl.d/30-network-buffers.conf
 net.core.rmem_max=16777216
 net.core.wmem_max=16777216
 net.ipv4.tcp_rmem=4096 87380 16777216
 net.ipv4.tcp_wmem=4096 65536 16777216
+net.core.netdev_max_backlog=16384
+net.core.netdev_budget=600
+net.core.dev_weight=128
 EOF
 sysctl -p /etc/sysctl.d/30-network-buffers.conf 2>/dev/null || true
 

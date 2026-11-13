@@ -45,8 +45,15 @@ Every release automatically compiles and packages **both devices** into separate
 - **Bridge multicast forwarding optimization (`group_fwd_mask = 0x4000`)**: Forwards link-layer LLDP frames, preventing false `rx_dropped` alarms from downstream APs.
 - **Backported QWRT memory anti-fragmentation optimization (`vm.percpu_pagelist_high_fraction = 128`)**, preventing high-concurrency page allocation stalls.
 - **LAN Multicast Bypass (`NOTRACK`)**: UPnP SSDP (`239.255.255.250:1900`) and Windows WSD (`3702`) bypass conntrack, preventing table exhaustion.
-- **Unified 16MB TCP/UDP Buffers**: Aligns `99-custom-net-optimization.conf` and `30-network-buffers.conf` to `16777216` (`16MB`) so hotplug/boot sysctl reloads never revert buffers back to 8MB.
-- **Fine-grained `ondemand` CPUFreq Scaling & Thermal Tuning**: `500–1200 MHz` with **`upthreshold0='75'`**, **`sdfactor0='1'`**, **`powersave_bias='100'` (10% power-save bias)**, **`ignore_nice_load='1'`**, and **`io_is_busy='0'`**. Fully leverages the 15 intermediate OPP steps (750–950 MHz) to flatten voltage spikes, drops to 500–650 MHz instantly when burst traffic ceases, and prevents background cron/I/O tasks from locking maximum frequency.
+- **High-Throughput Concurrency Queue Tuning (`netdev_max_backlog=16384` / `netdev_budget=600` / `dev_weight=128`)**: Extends network softirq polling budget to 600 packets per loop, quickly draining QDMA rings and preventing CPU CDM1 queue burst drops under heavy P2P and multicast traffic.
+- **PPE Hardware Flow Offload Threshold Tuning (`bind_rate = 5 5`)**: Lowers flowtable binding threshold from vendor 30 pps to 5 pps, accelerating non-proxied moderate streams onto hardware fastpath and freeing CPU DMA load.
+- **Fine-Grained Dual CPUFreq Tuning (Default: `conservative`, plus `ondemand`)**:
+  - **`conservative` (Default)**: Tailored for AN7581's 15 OPP frequency steps with **`freq_step='10'` (10% step / ~120MHz, halving ramp-up delay from 280ms to ~140ms and eliminating step lag)**, **`up_threshold='70'`**, **`down_threshold='30'`**, **`sampling_down_factor='2'` (steady stay, eliminating frequency ping-pong oscillation)**, and **`ignore_nice_load='1'`**, keeping typical operating temperature around 68°C.
+  - **`ondemand`**: Retains 75% up-threshold, sampling down factor 1, and 10% powersave bias. Both profiles are persisted in `/etc/rc.local` on boot.
+- **Frame Engine (PSE) Port Queue Telemetry Overhaul**:
+  - Fixed `luci-app-airoha-npu` bug that permanently flagged normal hardware boot handshake packets (e.g. 4 sync runt drops on GDM2) or historical cumulative drops in alarming red;
+  - Added real-time active drop detection: only alerts in red when active packet drops occur within the current sampling interval, displaying stable cumulative counts in neutral gray;
+  - Added "Reset Drop Baseline" button in Web UI to zero out historical counters with a single click.
 - **Traffic Profiler & Weekday/Weekend Circadian Thermal Governor (`traffic-profiler.sh`, optional, disabled by default)**: Bundles `/usr/sbin/traffic-profiler.sh`. **Disabled by default** to preserve standard out-of-the-box 1.2 GHz dynamic scaling. Fully user-controlled:
   - `traffic-profiler.sh enable`: Enables background hourly traffic and SoC thermal logging (differentiating weekdays vs weekends);
   - `traffic-profiler.sh report`: Prints 24-hour terminal ASCII distribution charts for weekdays and weekends;

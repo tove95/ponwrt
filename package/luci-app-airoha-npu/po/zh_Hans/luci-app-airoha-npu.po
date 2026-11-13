@@ -22,6 +22,9 @@ msgstr "PPE 硬件流表条目 (Fastpath)"
 msgid "PSE Port Queue Status"
 msgstr "PSE 交换端口队列状态"
 
+msgid "Reset Drop Baseline"
+msgstr "重置丢包基准"
+
 msgid "PSE Shared Buffer"
 msgstr "PSE 共享缓冲区"
 

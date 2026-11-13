@@ -242,15 +242,40 @@ function renderFeDiagram(fe, ti, st) {
 	var pseP = pseT>0 ? ((fe.pse_used/pseT)*100).toFixed(1) : '0';
 
 	// PSE port cells (skip P7 since it's shown in CDM4/WiFi section)
+	var baseline = {};
+	try { baseline = JSON.parse(localStorage.getItem('airoha_pse_drop_baseline') || '{}'); } catch(e) {}
+	var lastPseDrops = window._lastPseDrops || {};
+	window._lastPseDrops = lastPseDrops;
+
 	var portCells = ports.filter(function(p){ return p.port !== 7; }).map(function(p) {
 		var name = psePortMap[p.port] || '';
-		var drop = p.drops > 0;
-		return E('div', { 'class': 'airoha-npu-pse-cell' + (drop ? ' airoha-npu-pse-cell-drop' : '') }, [
+		var curDrops = p.drops || 0;
+		var baseVal = baseline[p.port] || 0;
+		if (curDrops < baseVal) {
+			baseVal = 0;
+			baseline[p.port] = 0;
+			try { localStorage.setItem('airoha_pse_drop_baseline', JSON.stringify(baseline)); } catch(e) {}
+		}
+		var effectiveDrops = Math.max(0, curDrops - baseVal);
+		var prev = lastPseDrops[p.port];
+		var isActivelyDropping = (prev !== undefined && curDrops > prev);
+		lastPseDrops[p.port] = curDrops;
+
+		var hasDrops = effectiveDrops > 0;
+		var cellCls = isActivelyDropping ? ' airoha-npu-pse-cell-drop' : '';
+		var dropBadge = null;
+		if (isActivelyDropping) {
+			dropBadge = E('span', { 'class': 'airoha-npu-error', 'title': _('Active packet drops detected') }, fmtK(effectiveDrops));
+		} else if (hasDrops) {
+			dropBadge = E('span', { 'class': 'airoha-npu-muted', 'title': _('Historical cumulative drops') }, fmtK(effectiveDrops));
+		}
+
+		return E('div', { 'class': 'airoha-npu-pse-cell' + cellCls }, [
 			E('div', { 'class': 'airoha-npu-text', 'style': 'font-weight:600;font-size:11px' }, ('P'+p.port+' '+name).trim()),
 			E('div', { 'style': 'display:flex;gap:8px;font-size:11px;margin-top:2px' }, [
 				E('span', { 'class': 'airoha-npu-muted' }, 'IQ '+p.iq),
 				E('span', { 'class': 'airoha-npu-muted' }, 'OQ '+p.oq),
-				drop ? E('span', { 'class': 'airoha-npu-error' }, fmtK(p.drops)) : null
+				dropBadge
 			].filter(Boolean))
 		]);
 	});
@@ -284,7 +309,21 @@ function renderFeDiagram(fe, ti, st) {
 			npuCard
 		]),
 		// PSE port grid
-		E('div', { 'class': 'airoha-npu-text', 'style': 'font-size:12px;font-weight:600;margin-bottom:6px' }, _('PSE Port Queue Status')),
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px' }, [
+			E('span', { 'class': 'airoha-npu-text', 'style': 'font-size:12px;font-weight:600' }, _('PSE Port Queue Status')),
+			E('button', {
+				'class': 'cbi-button cbi-button-neutral',
+				'style': 'padding:1px 6px;font-size:11px;line-height:1.4',
+				'click': function(ev) {
+					ev.preventDefault();
+					var b = {};
+					ports.forEach(function(p){ b[p.port] = p.drops || 0; });
+					try { localStorage.setItem('airoha_pse_drop_baseline', JSON.stringify(b)); } catch(e) {}
+					var fc = document.getElementById('airoha-npu-fe-container');
+					if (fc) { fc.innerHTML = ''; fc.appendChild(renderFeDiagram(fe, ti, st)); }
+				}
+			}, _('Reset Drop Baseline'))
+		]),
 		E('div', { 'class': 'airoha-npu-pse-grid' }, portCells)
 	]);
 }

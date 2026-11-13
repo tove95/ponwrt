@@ -45,8 +45,15 @@
 - **网桥组播放行优化（`group_fwd_mask = 0x4000`）**：原生放行链路层 LLDP 报文，彻底避免下挂 AP（如 WTA302）组播探针被网桥丢弃产生的 `rx_dropped` 误报警。
 - **移植 QWRT 内存防碎片参数（`vm.percpu_pagelist_high_fraction = 128`）**：深度优化单核 page 列表阈值，彻底杜绝 4 核并发高吞吐下的物理内存碎片与分配延迟。
 - **局域网广播免连接跟踪（`NOTRACK`）**：UPnP SSDP (`239.255.255.250:1900`) 与 Windows WSD (`3702`) 广播彻底绕过连接跟踪，避免广播污染 conntrack 表与交换芯片 CDM 队列。
-- **统一 16MB TCP/UDP 套接字与内核缓冲区**：将 `99-custom-net-optimization.conf` 与 `30-network-buffers.conf` 全部统一至 `16777216` (`16MB`)，消除热插拔或 `rc.local` 重载 `sysctl` 时从 16MB 回退至 8MB 的隐患，兼顾 4K 串流与代理高并发吞吐。
-- **精细化 `ondemand` 动态睿频与温控平衡**：`500MHz ~ 1200MHz` 配合 **`upthreshold0='75'`**、**`sdfactor0='1'`**、**`powersave_bias='100'`（10% 节电偏置）**、**`ignore_nice_load='1'`** 与 **`io_is_busy='0'`**，充分激活 AN7581 的 15 阶中间频阶（如 750~950MHz），高负载结束后毫秒级快速回落至 500~650MHz 稳步降温，同时杜绝后台维护任务和 Flash 读写盲目拉满频，兼顾发热控制与千兆/无线线速转发。
+- **万兆与并发队列深度调优（`netdev_max_backlog=16384` / `netdev_budget=600` / `dev_weight=128`）**：单次软中断轮询处理预算提升至 600 个包，极速释放 QDMA 环形缓冲区，搭配 16MB TCP 套接字大缓冲区，彻底杜绝 P2P 与多设备突发流量下的 CPU CDM1 交换队列瞬时丢包。
+- **调优 PPE 硬件流表直转门限（`bind_rate = 5 5`）**：将硬件加速门限从原厂 30 pps 降至 5 pps，加速非代理流量流表线速直转，彻底释放 CPU DMA 队列负担并降低整机功耗。
+- **精细化 CPUFreq 双调度器调优（默认预置 `conservative`，兼顾 `ondemand`）**：
+  - **`conservative`（默认推荐）**：专为 AN7581 的 15 阶频阶定制优化：**`freq_step='10'`（每次阶跃 10% / ~120MHz，将原本 280ms 漫长爬频缩短一半，彻底消除原生 conservative 爬频缓慢导致的顿挫感）**、**`up_threshold='70'`**、**`down_threshold='30'`**、**`sampling_down_factor='2'`（稳定驻留，杜绝频率在相邻频阶来回乒乓振荡）** 与 **`ignore_nice_load='1'`**，日常运行温度稳定压制在 68°C 左右。
+  - **`ondemand`**：保留 `75%` 升频门限、驻留倍数 1、`100`（10% 节电偏置），两者均写入 `/etc/rc.local` 开机自启，用户在 LuCI 中随时自由切换均享精细化底层参数。
+- **Frame Engine (PSE) 交换端口队列监控体验根治**：
+  - 修复 `luci-app-airoha-npu` 前端将物理层正常启动握手（如 GDM2 开机 4 个帧同步丢包）及历史微量累计丢包无脑永久标红显示为系统报错的 UI 缺陷；
+  - 升级为「实时活跃丢包检测」：仅在当前采样周期正在发生丢包时给予醒目警示，历史平稳计数显示为沉稳中性色；
+  - 界面新增「重置丢包基准」一键归零功能，随时清除开机以来的历史统计干扰。
 - **日常用量画像与工作日/周末分时温控工具 (`traffic-profiler.sh`，可选特性，默认不自启)**：内置 `/usr/sbin/traffic-profiler.sh`，**默认关闭**，系统保持原生 1.2GHz 全频段自适应调度。用户可随时按需自主选择开启或停用：
   - `traffic-profiler.sh enable`：一键开启整点用量与温度采样（后台极轻量记录，自动区分工作日与周末）；
   - `traffic-profiler.sh report`：在终端输出工作日 vs 周末 24 小时流量分布与温度直方图画像；

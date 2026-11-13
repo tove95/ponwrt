@@ -155,8 +155,9 @@ jobs:
               - 网桥放行 LLDP (0x4000)，杜绝下挂 AP 组播心跳导致网桥丢包统计异常
               - 移植 QWRT 内存防碎片参数 (`vm.percpu_pagelist_high_fraction = 128`)，提升高通量多核并发页面分配效率
               - 移植 QWRT SSDP (`239.255.255.250:1900`) 与 WSD (`3702`) `NOTRACK` 局域网广播旁路，防止连接跟踪表与交换芯片 CDM 队列膨胀
-              - 统一对齐 `16MB` (`16777216`) TCP/UDP 核心与套接字缓冲区（`99-custom-net-optimization.conf` 与 `30-network-buffers.conf`），防止热插拔重载回退，彻底消除高带宽长肥管道瓶颈
-              - 精细化 `ondemand` 动态睿频功耗与温控调度（`500–1200 MHz`，`upthreshold0='75'`、`sdfactor0='1'`、`powersave_bias='100'` 10% 节电偏置、`ignore_nice_load='1'`），激活 15 阶密集 OPP 中间频阶并于重载后毫秒级降频，停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
+              - 统一对齐 `16MB` (`16777216`) TCP/UDP 核心与套接字缓冲区及万兆网络队列扩容（`netdev_max_backlog=16384`, `netdev_budget=600`, `dev_weight=128`），提升软中断吞吐并消除 CPU CDM1 交换队列突发丢包
+              - 精细化 CPUFreq 双调度器调优（默认预置 `conservative`，阶跃 10%、门限 70%/30%、平滑驻留倍数 2，温度降至 ~68°C 且无顿挫；兼顾 `ondemand` 75% 门限与 10% 节电偏置），停用未配置硬盘的闲置 Samba4/wsdd2 开箱净省近 50MB 内存
+              - 调优 PPE 硬件流表直转门限至 `5 pps`，并修复 `luci-app-airoha-npu` PSE 交换端口队列历史丢包常态化标红缺陷，支持实时丢包检测与一键重置丢包基准
               - 内置可选日常用量画像与分时温控工具 (`/usr/sbin/traffic-profiler.sh`，默认不自启由用户自主按需开关)，支持工作日与周末 24 小时用量直方图与一键分时限频降温计划（`enable`/`disable`/`report`/`apply`）
             * **集成 QWRT 核心硬件特性**：
               - Airoha AN7581 NPU / PPE 硬件流量转发加速 (`luci-app-airoha-npu`, `luci-app-hqos`)
