@@ -47,6 +47,12 @@ Every release automatically compiles and packages **both devices** into separate
 - **LAN Multicast Bypass (`NOTRACK`)**: UPnP SSDP (`239.255.255.250:1900`) and Windows WSD (`3702`) bypass conntrack, preventing table exhaustion.
 - **Unified 16MB TCP/UDP Buffers**: Aligns `99-custom-net-optimization.conf` and `30-network-buffers.conf` to `16777216` (`16MB`) so hotplug/boot sysctl reloads never revert buffers back to 8MB.
 - **Fine-grained `ondemand` CPUFreq Scaling & Thermal Tuning**: `500–1200 MHz` with **`upthreshold0='75'`**, **`sdfactor0='1'`**, **`powersave_bias='100'` (10% power-save bias)**, **`ignore_nice_load='1'`**, and **`io_is_busy='0'`**. Fully leverages the 15 intermediate OPP steps (750–950 MHz) to flatten voltage spikes, drops to 500–650 MHz instantly when burst traffic ceases, and prevents background cron/I/O tasks from locking maximum frequency.
+- **Traffic Profiler & Weekday/Weekend Circadian Thermal Governor (`traffic-profiler.sh`, optional, disabled by default)**: Bundles `/usr/sbin/traffic-profiler.sh`. **Disabled by default** to preserve standard out-of-the-box 1.2 GHz dynamic scaling. Fully user-controlled:
+  - `traffic-profiler.sh enable`: Enables background hourly traffic and SoC thermal logging (differentiating weekdays vs weekends);
+  - `traffic-profiler.sh report`: Prints 24-hour terminal ASCII distribution charts for weekdays and weekends;
+  - `traffic-profiler.sh apply`: Auto-generates and applies crontab frequency capping based on real family habits (e.g. 650 MHz cool idle during sleep & away hours, 1.2 GHz burst during evening peak);
+  - `traffic-profiler.sh disable`: Instantly stops sampling, cleans all crontab entries, and restores standard 1.2 GHz scaling;
+  - `traffic-profiler.sh status`: Checks current logging status, CPU frequency cap, and core temperature.
 
 ### 4. Kernel Netfilter NFQUEUE Integration (Native Sing-Box `auto-redirect`)
 - Compiled and integrated `kmod-nfnetlink-queue`, `kmod-nft-queue`, and `kmod-ipt-nfqueue`.

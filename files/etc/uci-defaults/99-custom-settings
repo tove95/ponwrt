@@ -246,6 +246,7 @@ chmod +x /etc/hotplug.d/net/99-wifi-affinity 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/90-ipv6-fix 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/95-iptv-m3u-ip 2>/dev/null || true
 chmod +x /usr/sbin/pin-wifi-cpus.sh 2>/dev/null || true
+chmod +x /usr/sbin/traffic-profiler.sh 2>/dev/null || true
 
 # 首次启动时自动将 /www/iptv.m3u 中的播放地址同步为当前 LAN IP
 LAN_IP=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
@@ -315,7 +316,7 @@ echo "log-facility=/dev/null" >> /etc/dnsmasq.conf
 # 9. 烽火 (FiberHome) PON 认证与 Momo 自启配置跨版本升级自动保护机制
 # 将关键路径加入 /etc/sysupgrade.conf，防止固件升级抹除认证数据与开机自启
 SYSUPGRADE_CONF="/etc/sysupgrade.conf"
-for path in "/etc/config/pon" "/etc/fiberhome_pon_backup.uci" "/etc/fiberhome_pon_info.txt" "/usr/sbin/backup-fiberhome-pon.sh" "/usr/sbin/restore-fiberhome-pon.sh" "/etc/rc.d/S99momo" "/etc/rc.d/K10momo"; do
+for path in "/etc/config/pon" "/etc/fiberhome_pon_backup.uci" "/etc/fiberhome_pon_info.txt" "/usr/sbin/backup-fiberhome-pon.sh" "/usr/sbin/restore-fiberhome-pon.sh" "/etc/rc.d/S99momo" "/etc/rc.d/K10momo" "/usr/sbin/traffic-profiler.sh" "/etc/traffic_hourly.log"; do
     if ! grep -q "^$path" "$SYSUPGRADE_CONF" 2>/dev/null; then
         echo "$path" >> "$SYSUPGRADE_CONF"
     fi
