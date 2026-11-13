@@ -9,10 +9,10 @@ for pid in $(ls /proc | grep '^[0-9]*$' | sort -n); do
             taskset -p 8 "$pid" >/dev/null 2>&1
             ;;
         napi/phy0-0)
-            case $((idx % 3)) in
-                0) mask=1 ;;
-                1) mask=2 ;;
-                2) mask=4 ;;
+            case $((idx % 6)) in
+                0|1|2) mask=1 ;;
+                3)     mask=2 ;;
+                4|5)   mask=4 ;;
             esac
             taskset -p "$mask" "$pid" >/dev/null 2>&1
             idx=$((idx + 1))
