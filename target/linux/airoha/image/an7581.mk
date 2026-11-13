@@ -210,10 +210,18 @@ define Device/fiberhome_hg5585f-ct
 endef
 TARGET_DEVICES += fiberhome_hg5585f-ct
 
-# Disabled: non-standard USB 3.0 / SFP mods and CU (Unicom) models excluded as requested
+# Disabled: non-standard USB 3.0 / SFP mods excluded as requested
 # TARGET_DEVICES += fiberhome_hg5585f-ct-usb-sfp
-# TARGET_DEVICES += fiberhome_hg5585f-cu
 # TARGET_DEVICES += fiberhome_hg5585f-cu-usb-sfp
+
+define Device/fiberhome_hg5585f-cu
+  $(call Device/fiberhome_hg5585f-common)
+  DEVICE_MODEL := HG5585F
+  DEVICE_VARIANT := CU
+  DEVICE_DTS := an7581-fiberhome-hg5585f-cu
+  $(call Device/fiberhome_hg5585f-images)
+endef
+TARGET_DEVICES += fiberhome_hg5585f-cu
 
 # Both models share the UBI boot chain and store device data in factory.
 define Device/znxt_zn50xg-d-common

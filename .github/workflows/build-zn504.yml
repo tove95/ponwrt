@@ -92,11 +92,14 @@ jobs:
         run: |
           bash ./scripts/customize.sh
 
-      - name: Configure for ZN504XG-D
+      - name: Configure for HG5585F-CU only
         run: |
           ./scripts/kconfig.pl + \
             configs/an7581.config \
             configs/release.config > .config
+          # Disable every device, then keep only the HG5585F CU (Unicom) variant
+          sed -i -E 's/^CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_([a-z0-9-]+)=y/# CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_\1 is not set/' .config
+          sed -i 's|^# CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_fiberhome_hg5585f-cu is not set|CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_fiberhome_hg5585f-cu=y|' .config
           make defconfig
 
       - name: Download package sources
@@ -108,7 +111,7 @@ jobs:
       - name: Organize output files
         run: |
           mkdir -p output
-          find bin/targets/airoha/an7581/ -type f \( -name "*zn504*" -o -name "*hg5585f-ct*" \) ! -name "*usb-sfp*" \( -name "*sysupgrade.itb" -o -name "*recovery.itb" -o -name "*manifest" \) -exec cp {} output/ \;
+          find bin/targets/airoha/an7581/ -type f -name "*hg5585f-cu*" ! -name "*usb-sfp*" \( -name "*sysupgrade.itb" -o -name "*recovery.itb" -o -name "*manifest" \) -exec cp {} output/ \;
           cd output
           for file in $(ls * 2>/dev/null); do
             [ -f "$file" ] && sha256sum "$file" > "${file}.sha256"
@@ -120,7 +123,7 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PonWrt-ZN504-HG5585F-enhanced-firmware
+          name: PonWrt-HG5585F-cu-firmware
           path: output/*
           retention-days: 14
 
@@ -137,12 +140,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: PonWrt ZN504XG-D & HG5585F 电信版聚合增强固件 (${{ steps.tag.outputs.release_tag }})
+          name: PonWrt HG5585F 联通版聚合增强固件 (${{ steps.tag.outputs.release_tag }})
           body: |
-            ### PonWrt Airoha AN7581 聚合增强固件 (ZN504XG-D & HG5585F 电信版)
+            ### PonWrt Airoha AN7581 聚合增强固件 (HG5585F 联通版)
             * **适用机型**：
-              - **烽火/中移 ZN504XG-D**：纯有线 2.5G 高性能光猫（AN7581 + EN8811H 2.5G 网口）
-              - **烽火 HG5585F (CT 电信标准版)**：带 Wi-Fi 6 (MT7916D DBDC AX3000 + NPU WED 硬件加速，标准原生 USB 2.0 硬件配置)
+              - **烽火 HG5585F (CU 联通版)**：带 Wi-Fi 6 (MT7916D DBDC AX3000 + NPU WED 硬件加速，四个面板口走内置交换芯片 PHY)
             * **后台管理**：`192.168.1.1`（用户名: `root`，默认无密码）
             * **Wi-Fi 6 / 四核无线亲和性调优 (HG5585F)**：
               - 集成 MediaTek MT7916 驱动与 NPU WED 硬件加速固件 (`en7581_MT7916_npu_rv32.bin`)
