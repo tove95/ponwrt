@@ -1,6 +1,10 @@
 #!/bin/sh
-# 动态守护 IPv6 默认路由（当作为旁路由/二级设备且缺失 WAN IPv6 默认路由时，自动回退至上游 fe80::1）
 [ "$ACTION" = ifup -o "$ACTION" = ifupdate ] || exit 0
+
+# 若存在 PPPoE WAN 或配置了 PPPoE，坚决不添加任何 br-lan 假默认路由
+if [ "$(uci -q get network.wan.proto)" = "pppoe" ] || [ -d /sys/class/net/pppoe-wan ]; then
+    exit 0
+fi
 
 if [ "$INTERFACE" = "lan" ] || [ "$INTERFACE" = "lan6" ]; then
     if ! ip -6 route show default 2>/dev/null | grep -q 'default'; then

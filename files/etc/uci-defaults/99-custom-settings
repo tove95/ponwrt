@@ -4,6 +4,7 @@
 uci -q batch <<EOF
 set network.globals.packet_steering='0'
 set network.@device[0].igmp_snooping='0'
+set network.wan.sourcefilter='0'
 commit network
 EOF
 if [ -f /etc/init.d/packet_steering ]; then
@@ -266,9 +267,11 @@ cat << 'RCLOCAL' > /etc/rc.local
 # Put your custom commands here that should be executed once
 # the system init finished. By default this file does nothing.
 
-# 1. 若作为旁路由/网桥且缺失 WAN IPv6 默认路由，则自动回退至上游 fe80::1
-if ! ip -6 route show default 2>/dev/null | grep -q 'default'; then
-    ip -6 route replace default via fe80::1 dev br-lan 2>/dev/null
+# 1. 仅当非 PPPoE 主路由（如作为纯旁路由）且缺失默认路由时才回退 fe80::1
+if [ "$(uci -q get network.wan.proto)" != "pppoe" ] && [ ! -d /sys/class/net/pppoe-wan ]; then
+    if ! ip -6 route show default 2>/dev/null | grep -q 'default'; then
+        ip -6 route replace default via fe80::1 dev br-lan 2>/dev/null
+    fi
 fi
 
 # 2. 重新加载高通量网络缓冲与 IPTV UDP 核心参数
