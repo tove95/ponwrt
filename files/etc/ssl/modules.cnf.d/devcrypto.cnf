@@ -1,7 +1,0 @@
-[devcrypto_sect]
-default_algorithms = ALL
-
-CIPHERS=DES-CBC, DES-EDE3-CBC, AES-128-CBC, AES-192-CBC, AES-256-CBC, \
-	AES-128-CTR, AES-192-CTR, AES-256-CTR
-
-DIGESTS = NONE
