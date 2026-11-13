@@ -47,13 +47,6 @@ set firewall.allow_luci_wan.proto='tcp'
 set firewall.allow_luci_wan.dest_port='9080'
 set firewall.allow_luci_wan.target='ACCEPT'
 
-set firewall.allow_tailscale_wan=rule
-set firewall.allow_tailscale_wan.name='Allow-Tailscale-Inbound'
-set firewall.allow_tailscale_wan.src='wan'
-set firewall.allow_tailscale_wan.proto='udp'
-set firewall.allow_tailscale_wan.dest_port='41641'
-set firewall.allow_tailscale_wan.target='ACCEPT'
-
 set firewall.allow_ax3000t_ipv6=rule
 set firewall.allow_ax3000t_ipv6.name='Allow-AX3000T-IPv6'
 set firewall.allow_ax3000t_ipv6.src='wan'
